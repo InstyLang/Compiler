@@ -1,0 +1,70 @@
+// Insty standard library: math
+//
+// Integer math helpers. All functions operate on i64; callers with smaller
+// integer types are implicitly widened at the call site.
+
+module math
+
+// Absolute value.
+fun abs(i64 n) -> i64 {
+    if n < 0 {
+        return 0 - n
+    }
+    return n
+}
+
+// Smaller of two values.
+fun min(i64 a, i64 b) -> i64 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+// Larger of two values.
+fun max(i64 a, i64 b) -> i64 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+// Clamp v into the inclusive range [lo, hi].
+fun clamp(i64 v, i64 lo, i64 hi) -> i64 {
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+// -1, 0, or 1 depending on the sign of n.
+fun sign(i64 n) -> i64 {
+    if n < 0 {
+        return 0 - 1
+    }
+    if n > 0 {
+        return 1
+    }
+    return 0
+}
+
+// base raised to the exp power (exp < 0 yields 0, integer semantics).
+fun pow(i64 base, i64 exp) -> i64 {
+    if exp < 0 {
+        return 0
+    }
+    i64 result = 1
+    i64 b = base
+    i64 e = exp
+    while e > 0 {
+        if (e - (e / 2) * 2) == 1 {
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    return result
+}

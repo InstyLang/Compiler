@@ -1,0 +1,50 @@
+module main
+
+struct Point {
+    i32 x
+    i32 y
+}
+
+class Named {
+    i32 id
+    constructor(i32 i) {
+        this.id = i
+    }
+    fun toString() -> text {
+        return "Named#custom"
+    }
+}
+
+// Exercises interpolation codegen for int, bool, char/u8, text, float, struct
+// (auto-derived) and class (toString). The strings are built into stack buffers
+// (no allocator, no OS write primitive) so this fixture is freestanding-safe.
+// It then reads bytes back out of an interpolated string to assert the
+// formatting actually ran, returning a fixed success code (33).
+fun main() -> i32 {
+    i32 n = 42
+    bool ok = true
+    text who = "ecx"
+    u8 letter = 65
+    f64 pi = 3.14159
+
+    text a = "n=$n ok=$ok who=$who c=$letter pi=$pi"
+    Point p = Point{ x: 3, y: 9 }
+    text b = "point=$p sum=${n + 8}"
+    Named nm = Named(5)
+    text c = "named=$nm"
+
+    // a starts with "n=42": a[0]='n'(110), a[2]='4'(52), a[3]='2'(50).
+    unsafe {
+        i32 c0 = cast<i32>(a[0])
+        i32 c2 = cast<i32>(a[2])
+        i32 c3 = cast<i32>(a[3])
+        if c0 == 110 {
+            if c2 == 52 {
+                if c3 == 50 {
+                    return 33
+                }
+            }
+        }
+        return 1
+    }
+}

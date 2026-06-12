@@ -1,0 +1,21 @@
+module main
+
+class Box<T> {
+    T value
+    constructor(T v) {
+        this.value = v
+    }
+    fun get() -> T {
+        return this.value
+    }
+    fun set(T v) -> void {
+        this.value = v
+    }
+}
+
+fun main() -> i32 {
+    Box<i32> bi = Box<i32>(7)
+    Box<i64> bl = Box<i64>(99)
+    bi.set(33)
+    return bi.get()
+}

@@ -1,0 +1,26 @@
+module main
+
+class Counter {
+    i32 value
+    constructor(i32 initial) {
+        this.value = initial
+    }
+    fun inc() -> void {
+        this.value = this.value + 1
+    }
+    operator +(Counter rhs) -> i32 {
+        return this.value + rhs.value
+    }
+    fun get() -> i32 {
+        return this.value
+    }
+}
+
+fun main() -> i32 {
+    Counter a = Counter(5)
+    a.inc()
+    a.inc()
+    Counter b = Counter(26)
+    i32 total = a + b
+    return total
+}

@@ -1,0 +1,14 @@
+module main
+
+// Indexing a `text` (u8* NUL-terminated string) yields the u8 byte at that
+// position. Regression test for a codegen crash where text[i] lowered to a
+// void element load. "Az9" -> bytes 65, 122, 57; returns 65+122+57-211 = 33.
+fun main() -> i32 {
+    text s = "Az9"
+    unsafe {
+        i32 a = cast<i32>(s[0])
+        i32 b = cast<i32>(s[1])
+        i32 c = cast<i32>(s[2])
+        return a + b + c - 211
+    }
+}

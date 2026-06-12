@@ -1,0 +1,242 @@
+// Insty standard library: coff
+//
+// A minimal PE/COFF (PE32+) loader, the core of a UEFI bootloader. It maps
+// a kernel image read off disk into memory: parse the headers, copy the
+// section bytes to their virtual addresses, then patch base relocations so
+// the image runs correctly at the address it was actually loaded at.
+//
+// Everything operates on raw addresses passed as u64, reading fields by
+// byte offset. The module is freestanding: no firmware calls, no
+// allocation. The caller supplies a file buffer and a destination region
+// (typically page-allocated via uefi.alloc_pages), then jumps to the
+// entry point (file load base + entry RVA) with fnCall.
+//
+// Layout reference (PE32+):
+//   DOS header:  e_magic u16 @0 ('MZ'=0x5A4D), e_lfanew u32 @0x3C
+//   NT headers:  Signature u32 @e_lfanew ('PE\0\0'=0x4550),
+//                FileHeader @+4, OptionalHeader @+24
+//   FileHeader:  NumberOfSections u16 @2, SizeOfOptionalHeader u16 @16
+//   OptHdr64:    Magic u16 @0 (0x20B), AddressOfEntryPoint u32 @16,
+//                ImageBase u64 @24, SizeOfImage u32 @56,
+//                SizeOfHeaders u32 @60, NumberOfRvaAndSizes u32 @108,
+//                DataDirectory[] @112 (8 bytes each; BaseReloc = index 5)
+//   Section hdr: 40 bytes; VirtualSize u32 @8, VirtualAddress u32 @12,
+//                SizeOfRawData u32 @16, PointerToRawData u32 @20
+//   Base reloc:  block { VirtualAddress u32 @0, SizeOfBlock u32 @4 },
+//                then (SizeOfBlock-8)/2 u16 entries; entry>>12 = type,
+//                entry & 0xFFF = offset. Types: 0 ABSOLUTE, 3 HIGHLOW, 10 DIR64.
+
+module coff
+
+// --- little-endian field reads -------------------------------------------
+
+fun rd_u16(u64 addr) -> u32 {
+    unsafe {
+        u16* p = cast<u16*>(addr)
+        return cast<u32>(p[0])
+    }
+    return 0
+}
+
+fun rd_u32(u64 addr) -> u32 {
+    unsafe {
+        u32* p = cast<u32*>(addr)
+        return p[0]
+    }
+    return 0
+}
+
+fun rd_u64(u64 addr) -> u64 {
+    unsafe {
+        u64* p = cast<u64*>(addr)
+        return p[0]
+    }
+    return 0
+}
+
+// --- header navigation ---------------------------------------------------
+
+// Offset of the NT headers within the file (DOS e_lfanew @ 0x3C).
+fun nt_offset(u64 base) -> u32 {
+    return rd_u32(base + 60)
+}
+
+// Address of the optional header (PE32+ standard/windows fields).
+fun opt_header(u64 base) -> u64 {
+    u64 nt = cast<u64>(nt_offset(base))
+    // Signature(4) + FileHeader(20) = optional header at nt + 24.
+    return base + nt + 24
+}
+
+// Validate DOS 'MZ' and NT 'PE\0\0' signatures and the PE32+ magic.
+// Returns true when the buffer looks like a PE32+ image.
+fun is_pe32plus(u64 base) -> bool {
+    if rd_u16(base) != 0x5a4d {
+        return false
+    }
+    u64 nt = base + cast<u64>(nt_offset(base))
+    if rd_u32(nt) != 0x00004550 {
+        return false
+    }
+    if rd_u16(opt_header(base)) != 0x020b {
+        return false
+    }
+    return true
+}
+
+fun image_base(u64 base) -> u64 {
+    return rd_u64(opt_header(base) + 24)
+}
+
+fun size_of_image(u64 base) -> u32 {
+    return rd_u32(opt_header(base) + 56)
+}
+
+fun size_of_headers(u64 base) -> u32 {
+    return rd_u32(opt_header(base) + 60)
+}
+
+fun entry_point_rva(u64 base) -> u32 {
+    return rd_u32(opt_header(base) + 16)
+}
+
+fun section_count(u64 base) -> u32 {
+    u64 nt = base + cast<u64>(nt_offset(base))
+    // FileHeader.NumberOfSections is at NT signature + 4 + 2.
+    return rd_u16(nt + 6)
+}
+
+// Address of the first section header. The section table follows the
+// optional header, whose size is FileHeader.SizeOfOptionalHeader (@ +16).
+fun section_table(u64 base) -> u64 {
+    u64 nt = base + cast<u64>(nt_offset(base))
+    u32 optSize = rd_u16(nt + 20)
+    // optional header starts at nt + 24.
+    return nt + 24 + cast<u64>(optSize)
+}
+
+// --- mapping -------------------------------------------------------------
+
+// Copy headers and all section bodies from the on-disk file at `src` into
+// the destination image at `dest`. `dest` must be a zeroed region at least
+// size_of_image(src) bytes (so .bss-style uninitialised sections read 0).
+// memcpy is open-coded so the module stays freestanding.
+fun copy_bytes(u64 dest, u64 src, u64 n) -> void {
+    unsafe {
+        u8* d = cast<u8*>(dest)
+        u8* s = cast<u8*>(src)
+        u64 i = 0
+        while i < n {
+            d[i] = s[i]
+            i = i + 1
+        }
+    }
+}
+
+fun zero_bytes(u64 dest, u64 n) -> void {
+    unsafe {
+        u8* d = cast<u8*>(dest)
+        u64 i = 0
+        while i < n {
+            d[i] = 0
+            i = i + 1
+        }
+    }
+}
+
+// Map `src` (raw file image) into `dest` (zeroed, page-allocated). Lays
+// down the headers then each section at its VirtualAddress. Returns the
+// entry point address within dest (dest + entry RVA), or 0 if `src` is not
+// a PE32+ image.
+fun map_image(u64 dest, u64 src) -> u64 {
+    if !is_pe32plus(src) {
+        return 0
+    }
+
+    zero_bytes(dest, cast<u64>(size_of_image(src)))
+    copy_bytes(dest, src, cast<u64>(size_of_headers(src)))
+
+    u32 count = section_count(src)
+    u64 sec = section_table(src)
+    u32 i = 0
+    while i < count {
+        u32 rawSize = rd_u32(sec + 16)
+        if rawSize != 0 {
+            u32 va = rd_u32(sec + 12)
+            u32 rawOff = rd_u32(sec + 20)
+            copy_bytes(dest + cast<u64>(va), src + cast<u64>(rawOff),
+                       cast<u64>(rawSize))
+        }
+        sec = sec + 40
+        i = i + 1
+    }
+
+    return dest + cast<u64>(entry_point_rva(src))
+}
+
+// --- relocation ----------------------------------------------------------
+
+// Apply base relocations to the mapped image at `dest`, adjusting for the
+// delta between where it was linked (its preferred ImageBase) and where it
+// actually landed (`dest`). `headerSrc` is the original file buffer (used
+// only to read the base-relocation directory RVA/size; the patched bytes
+// live in `dest`). A delta of 0 is a no-op. Returns true on success.
+fun apply_relocations(u64 dest, u64 headerSrc) -> bool {
+    if !is_pe32plus(headerSrc) {
+        return false
+    }
+
+    u64 delta = dest - image_base(headerSrc)
+    if delta == 0 {
+        return true
+    }
+
+    u64 opt = opt_header(headerSrc)
+    if rd_u32(opt + 108) < 6 {
+        // No base-relocation data directory present.
+        return true
+    }
+    // DataDirectory[5] (BaseReloc): VirtualAddress @ +112 + 5*8.
+    u64 dirEntry = opt + 112 + 40
+    u32 relocRva = rd_u32(dirEntry)
+    u32 relocSize = rd_u32(dirEntry + 4)
+    if relocRva == 0 {
+        return true
+    }
+
+    unsafe {
+        u64 block = dest + cast<u64>(relocRva)
+        u64 blockEnd = block + cast<u64>(relocSize)
+        while block < blockEnd {
+            u32 pageRva = rd_u32(block)
+            u32 sizeOfBlock = rd_u32(block + 4)
+            if sizeOfBlock < 8 {
+                return true
+            }
+            u32 count = (sizeOfBlock - 8) / 2
+            u64 entryAddr = block + 8
+            u32 j = 0
+            while j < count {
+                u32 entry = rd_u16(entryAddr)
+                u32 type = entry / 4096
+                u32 off = entry - type * 4096
+                u64 target = dest + cast<u64>(pageRva) + cast<u64>(off)
+                if type == 10 {
+                    // DIR64: patch a full 64-bit pointer.
+                    u64* p = cast<u64*>(target)
+                    p[0] = p[0] + delta
+                }
+                if type == 3 {
+                    // HIGHLOW: patch the low 32 bits.
+                    u32* p = cast<u32*>(target)
+                    p[0] = p[0] + cast<u32>(delta)
+                }
+                entryAddr = entryAddr + 2
+                j = j + 1
+            }
+            block = block + cast<u64>(sizeOfBlock)
+        }
+    }
+
+    return true
+}

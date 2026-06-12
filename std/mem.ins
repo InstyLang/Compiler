@@ -1,0 +1,47 @@
+// Insty standard library: mem
+//
+// Raw memory operations on byte pointers. All functions are simple byte
+// loops; they make no alignment or overlap assumptions except where noted.
+
+module mem
+
+// Copy n bytes from src to dst. Regions must not overlap.
+fun copy(u8* dst, u8* src, u64 n) -> void {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            dst[i] = src[i]
+            i = i + 1
+        }
+    }
+}
+
+// Fill n bytes at p with the given value.
+fun set(u8* p, u8 value, u64 n) -> void {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            p[i] = value
+            i = i + 1
+        }
+    }
+}
+
+// Zero n bytes at p.
+fun zero(u8* p, u64 n) -> void {
+    set(p, 0, n)
+}
+
+// Compare n bytes; returns true when the regions are identical.
+fun eq(u8* a, u8* b, u64 n) -> bool {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            if a[i] != b[i] {
+                return false
+            }
+            i = i + 1
+        }
+    }
+    return true
+}

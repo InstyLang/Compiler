@@ -1,0 +1,18 @@
+module main
+
+fun id<T>(T value) -> T {
+    return value
+}
+
+fun max2<T>(T a, T b) -> T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fun main() -> i32 {
+    i32 a = id<i32>(7)
+    i32 m = max2<i32>(10, 26)
+    return a + m
+}

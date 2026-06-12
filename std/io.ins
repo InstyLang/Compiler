@@ -1,0 +1,89 @@
+// Insty standard library: io
+//
+// Console input/output for hosted Linux targets. All output goes through
+// raw write(2) syscalls, so this module has no dependency on libc.
+//
+// fd 1 = stdout, fd 2 = stderr
+
+module io
+
+// Write a string to stdout without a trailing newline.
+fun print(text s) -> void {
+    unsafe {
+        @syscall(1, 1, s, @strlen(s))
+    }
+}
+
+// Write a string to stdout followed by a newline.
+fun println(text s) -> void {
+    print(s)
+    unsafe {
+        @syscall(1, 1, "\n", 1)
+    }
+}
+
+// Write a string to stderr without a trailing newline.
+fun eprint(text s) -> void {
+    unsafe {
+        @syscall(1, 2, s, @strlen(s))
+    }
+}
+
+// Write a string to stderr followed by a newline.
+fun eprintln(text s) -> void {
+    eprint(s)
+    unsafe {
+        @syscall(1, 2, "\n", 1)
+    }
+}
+
+// Internal: format n as decimal into the given file descriptor.
+fun write_int_fd(i64 fd, i64 n) -> void {
+    u8[32] buf;
+    unsafe {
+        u8* p = cast<u8*>(&buf)
+        i64 i = 31
+        i64 v = n
+        bool neg = false
+        if v < 0 {
+            neg = true
+            v = 0 - v
+        }
+        if v == 0 {
+            p[i] = 48
+            i = i - 1
+        }
+        while v > 0 {
+            p[i] = cast<u8>(48 + (v - (v / 10) * 10))
+            v = v / 10
+            i = i - 1
+        }
+        if neg {
+            p[i] = 45
+            i = i - 1
+        }
+        i64 start = i + 1
+        @syscall(1, fd, cast<i64>(p) + start, 32 - start)
+    }
+}
+
+// Write a signed integer to stdout without a trailing newline.
+fun print_int(i64 n) -> void {
+    write_int_fd(1, n)
+}
+
+// Write a signed integer to stdout followed by a newline.
+fun println_int(i64 n) -> void {
+    write_int_fd(1, n)
+    unsafe {
+        @syscall(1, 1, "\n", 1)
+    }
+}
+
+// Write a signed integer to stderr followed by a newline.
+fun eprintln_int(i64 n) -> void {
+    write_int_fd(2, n)
+    unsafe {
+        @syscall(1, 2, "\n", 1)
+    }
+}
