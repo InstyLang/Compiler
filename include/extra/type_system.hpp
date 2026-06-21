@@ -58,6 +58,13 @@ class TypeContext {
 public:
     TypeContext();
 
+    // A process-unique, never-reused identity for this context instance.
+    // Used by caches that hold TypeRefs (raw const Type*) owned by this
+    // context so they can detect a destroyed-and-recreated context that
+    // happens to reuse the same address. Keying such caches on the raw
+    // `TypeContext*` is unsafe because the address can be reused.
+    uint64_t id() const { return id_; }
+
     TypeRef voidType() const { return &void_; }
     TypeRef boolType() const { return &bool_; }
     TypeRef textType() const { return &text_; }
@@ -83,6 +90,8 @@ private:
     Type bool_;
     Type text_;
     Type error_;
+
+    uint64_t id_;
 
     std::vector<std::unique_ptr<Type>> pool_;
     std::vector<std::pair<std::string, Kind>> named_;

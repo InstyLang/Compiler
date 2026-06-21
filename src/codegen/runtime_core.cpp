@@ -247,10 +247,15 @@ struct CoreModule {
 
 namespace {
 
-std::unordered_map<Types::TypeContext*, std::unique_ptr<CoreModule>> g_coreCache;
+// Cache of the analyzed core module, keyed by the owning TypeContext's
+// process-unique id (not its address). The CoreModule's SemaResult holds
+// TypeRefs (raw const Type*) owned by that TypeContext; keying on the raw
+// pointer is unsafe because a destroyed context can be recreated at the same
+// address, which would return a stale CoreModule full of dangling TypeRefs.
+std::unordered_map<uint64_t, std::unique_ptr<CoreModule>> g_coreCache;
 
 CoreModule* getCoreModule(Types::TypeContext& types) {
-    auto it = g_coreCache.find(&types);
+    auto it = g_coreCache.find(types.id());
     if (it != g_coreCache.end()) {
         return it->second.get();
     }
@@ -268,7 +273,7 @@ CoreModule* getCoreModule(Types::TypeContext& types) {
     }
 
     CoreModule* raw = cm.get();
-    g_coreCache[&types] = std::move(cm);
+    g_coreCache[types.id()] = std::move(cm);
     return raw;
 }
 

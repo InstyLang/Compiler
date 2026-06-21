@@ -1,11 +1,14 @@
 #include <extra/type_system.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 
 namespace Types {
 
 namespace {
+
+std::atomic<uint64_t> g_nextContextId{1};
 
 bool parseInteger(const std::string& s, int64_t& out) {
     if (s.empty()) {
@@ -38,6 +41,7 @@ bool isPrimitiveSpelling(const std::string& name) {
 }
 
 TypeContext::TypeContext() {
+    id_ = g_nextContextId.fetch_add(1, std::memory_order_relaxed);
     void_.kind = Kind::Void;
     bool_.kind = Kind::Bool;
     bool_.bitWidth = 1;
