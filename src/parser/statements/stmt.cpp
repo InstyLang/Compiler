@@ -13,6 +13,9 @@ AST::NodePtr Parser::parseTopLevel() {
         if (check(TokenType::KwFun)) {
             return parseFunctionDeclaration(std::move(attrs));
         }
+        if (check(TokenType::KwExtern)) {
+            return parseExternDeclaration(std::move(attrs));
+        }
         if (check(TokenType::KwStruct)) {
             advance();
             return parseStructDeclaration(std::move(attrs));
@@ -34,6 +37,8 @@ AST::NodePtr Parser::parseTopLevel() {
             return parseImport();
         case TokenType::KwFun:
             return parseFunctionDeclaration({});
+        case TokenType::KwExtern:
+            return parseExternDeclaration({});
         case TokenType::KwStruct:
             advance();
             return parseStructDeclaration({});

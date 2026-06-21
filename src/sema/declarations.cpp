@@ -228,6 +228,13 @@ std::string Checker::computeMangledName(AST::FunctionDeclaration* node, bool& ou
         }
     }
 
+    // The `extern` keyword declares an external C/ABI symbol: never mangle it,
+    // so calls resolve to the raw symbol (e.g. libc `malloc`) at link time.
+    if (node->isExtern) {
+        outIsExtern = true;
+        return fnName;
+    }
+
     if (const auto* a = findAttr(node->attributes, "mangle")) {
         if (a->value == "off") {
             return fnName;

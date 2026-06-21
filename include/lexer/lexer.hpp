@@ -16,6 +16,7 @@ enum class TokenType {
     KwImport,
     KwAs,
     KwFun,
+    KwExtern,
     KwStruct,
     KwClass,
     KwEnum,

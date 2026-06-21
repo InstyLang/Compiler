@@ -309,6 +309,23 @@ void testReinterpretReads() {
     CHECK(contains(ir, "load i64"));
 }
 
+void testExtern() {
+    bool verified = false;
+    std::string ir = compileToIR(
+        "module main\n"
+        "extern fun ext_alloc(i64 size) -> i64\n"
+        "fun main() -> i64 {\n  return ext_alloc(8)\n}\n",
+        verified);
+    CHECK(verified);
+    // extern emits a declaration, not a definition, for the external symbol...
+    CHECK(contains(ir, "declare"));
+    // ...with an UNMANGLED symbol name (must not be mangled to main_ext_alloc).
+    CHECK(contains(ir, "@ext_alloc"));
+    CHECK(!contains(ir, "@main_ext_alloc"));
+    // and main calls it.
+    CHECK(contains(ir, "call"));
+}
+
 }
 
 int main() {
@@ -335,6 +352,7 @@ int main() {
     testSizeof();
     testWideString();
     testReinterpretReads();
+    testExtern();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " codegen checks passed\n";
     if (g_failures > 0) {

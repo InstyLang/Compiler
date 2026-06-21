@@ -44,3 +44,24 @@ AST::NodePtr Parser::parseFunctionDeclaration(std::vector<AST::Attribute> attrib
     fillRange(*node, start);
     return node;
 }
+
+// `extern fun name(params) -> ret` declares a function defined elsewhere (an
+// external C/ABI symbol). It is parsed exactly like a normal function but must
+// be bodyless, and the name is not mangled (handled in sema) so it links
+// against the external symbol directly.
+AST::NodePtr Parser::parseExternDeclaration(std::vector<AST::Attribute> attributes) {
+    expect(TokenType::KwExtern, "E1414", "'extern' to begin an external declaration");
+    match(TokenType::KwExtern);
+
+    AST::NodePtr decl = parseFunctionDeclaration(std::move(attributes));
+    // parseFunctionDeclaration always returns a FunctionDeclaration node.
+    if (decl && decl->nodeType() == AST::NodeType::FunctionDeclaration) {
+        auto* fn = static_cast<AST::FunctionDeclaration*>(decl.get());
+        fn->isExtern = true;
+        if (fn->hasBody) {
+            error("E1415", "extern functions cannot have a body",
+                  "declare the signature only: `extern fun name(...) -> type`");
+        }
+    }
+    return decl;
+}

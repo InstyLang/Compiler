@@ -101,6 +101,12 @@ void Parser::predeclareTopLevel() {
         }
 
         TokenType t = tok.type;
+        // `extern fun ...` predeclares the same way `fun ...` does; skip the
+        // leading `extern` so the next iteration processes the `fun`.
+        if (t == TokenType::KwExtern) {
+            advance();
+            continue;
+        }
         if (t == TokenType::KwFun || t == TokenType::KwStruct ||
             t == TokenType::KwClass || t == TokenType::KwEnum) {
             advance();

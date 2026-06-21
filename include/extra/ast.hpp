@@ -113,6 +113,7 @@ struct FunctionDeclaration : ExprAST {
     std::vector<Attribute> attributes;
     NodeList body;
     bool hasBody = true;
+    bool isExtern = false;   // declared with the `extern` keyword (external C symbol)
     NodeType nodeType() const override { return NodeType::FunctionDeclaration; }
 };
 
