@@ -5,7 +5,9 @@
 #include <fstream>
 #include <sstream>
 
-#if defined(__linux__)
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__linux__)
 #include <limits.h>
 #include <unistd.h>
 #endif
@@ -69,7 +71,13 @@ bool startsWith(const std::string& value, const std::string& prefix) {
 }
 
 std::string executableDirectory() {
-#if defined(__linux__)
+#if defined(_WIN32)
+    wchar_t buffer[MAX_PATH];
+    const DWORD count = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (count > 0 && count < MAX_PATH) {
+        return fs::path(buffer).parent_path().string();
+    }
+#elif defined(__linux__)
     char buffer[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
     if (count > 0) {

@@ -88,18 +88,45 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
     COMMAND_ERROR_IS_FATAL ANY
 )
-execute_process(
-    COMMAND ${LLVM_CONFIG_EXECUTABLE} --libs --link-static ${INSTY_LLVM_COMPONENTS}
-    OUTPUT_VARIABLE LLVM_STATIC_LIBS_TEXT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
-)
-execute_process(
-    COMMAND ${LLVM_CONFIG_EXECUTABLE} --system-libs --link-static
-    OUTPUT_VARIABLE LLVM_STATIC_SYSTEM_LIBS_TEXT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
-)
+
+# When cross-compiling (e.g. a Linux host building Windows binaries with a
+# native llvm-config), the native llvm-config cannot enumerate the target's
+# archives: both its `--libs` and `--libnames` modes validate that each archive
+# exists in the *native* libdir and fail otherwise. Link the target install's
+# archives directly instead (see below).
+if(CMAKE_CROSSCOMPILING AND INSTY_LLVM_ROOT)
+    set(LLVM_STATIC_LIBRARY_DIR "${INSTY_LLVM_ROOT}/lib")
+    # Link every LLVM archive in the target install inside the --start-group/
+    # --end-group below. The install was built with exactly the components this
+    # compiler needs (X86 + AArch64 + core/JIT), so linking all of them both
+    # satisfies the requested components and resolves their transitive
+    # intra-LLVM references without having to reproduce llvm-config's dependency
+    # closure (which the native llvm-config cannot compute for a cross target).
+    file(GLOB LLVM_CROSS_ARCHIVES "${LLVM_STATIC_LIBRARY_DIR}/libLLVM*.a")
+    set(LLVM_STATIC_LIBS_TEXT "")
+    foreach(LLVM_CROSS_ARCHIVE IN LISTS LLVM_CROSS_ARCHIVES)
+        get_filename_component(LLVM_CROSS_STEM "${LLVM_CROSS_ARCHIVE}" NAME_WE)
+        string(REGEX REPLACE "^lib" "" LLVM_CROSS_STEM "${LLVM_CROSS_STEM}")
+        set(LLVM_STATIC_LIBS_TEXT "${LLVM_STATIC_LIBS_TEXT} -l${LLVM_CROSS_STEM}")
+    endforeach()
+    # LLVM's Windows Support library depends on these system DLLs (ntdll for
+    # RtlGetLastNtStatus, ws2_32 for sockets, etc.). The native llvm-config
+    # cannot report the target's --system-libs, so list them explicitly.
+    set(LLVM_STATIC_SYSTEM_LIBS_TEXT "-lntdll -lws2_32 -lpsapi -lshell32 -lole32 -luuid -ladvapi32")
+else()
+    execute_process(
+        COMMAND ${LLVM_CONFIG_EXECUTABLE} --libs --link-static ${INSTY_LLVM_COMPONENTS}
+        OUTPUT_VARIABLE LLVM_STATIC_LIBS_TEXT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(
+        COMMAND ${LLVM_CONFIG_EXECUTABLE} --system-libs --link-static
+        OUTPUT_VARIABLE LLVM_STATIC_SYSTEM_LIBS_TEXT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endif()
 
 separate_arguments(LLVM_STATIC_LIBS_RAW UNIX_COMMAND "${LLVM_STATIC_LIBS_TEXT}")
 separate_arguments(LLVM_STATIC_SYSTEM_LIBS UNIX_COMMAND "${LLVM_STATIC_SYSTEM_LIBS_TEXT}")
@@ -144,6 +171,14 @@ endforeach()
 
 set(LLVM_LIBS -Wl,--start-group ${LLVM_STATIC_ARCHIVES} -Wl,--end-group ${LLVM_STATIC_SYSTEM_LIBS_RESOLVED})
 message(STATUS "Using static LLVM archives from: ${LLVM_STATIC_LIBRARY_DIR}")
+
+# Produce a self-contained Windows executable: statically link the C++ runtime
+# (libc++), the unwinder and the compiler runtime so the .exe does not depend on
+# libc++.dll / libunwind.dll being present alongside it.
+if(CMAKE_CROSSCOMPILING AND WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+endif()
 
 include_directories(include)
 

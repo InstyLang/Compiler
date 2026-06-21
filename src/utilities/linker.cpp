@@ -10,8 +10,14 @@
 #include <iostream>
 #include <sstream>
 #include <string_view>
+
+#if defined(_WIN32)
+#include <process.h>
+#include <windows.h>
+#else
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -90,6 +96,141 @@ std::string formatCommand(const std::vector<std::string>& args) {
     }
     return formatted;
 }
+
+#if defined(_WIN32)
+
+// Quote a single argument according to the rules the Windows CRT/CommandLineToArgvW
+// use, so arguments containing spaces or quotes survive the round trip through a
+// single command-line string (Windows has no argv array for CreateProcess).
+std::string quoteWindowsArg(const std::string& arg) {
+    if (!arg.empty() &&
+        arg.find_first_of(" \t\n\v\"") == std::string::npos) {
+        return arg;
+    }
+
+    std::string quoted = "\"";
+    for (auto it = arg.begin();; ++it) {
+        unsigned backslashes = 0;
+        while (it != arg.end() && *it == '\\') {
+            ++it;
+            ++backslashes;
+        }
+
+        if (it == arg.end()) {
+            quoted.append(backslashes * 2, '\\');
+            break;
+        }
+
+        if (*it == '"') {
+            quoted.append(backslashes * 2 + 1, '\\');
+            quoted += '"';
+        } else {
+            quoted.append(backslashes, '\\');
+            quoted += *it;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string buildCommandLine(const std::vector<std::string>& args) {
+    std::string commandLine;
+    for (size_t index = 0; index < args.size(); ++index) {
+        if (index != 0) {
+            commandLine += ' ';
+        }
+        commandLine += quoteWindowsArg(args[index]);
+    }
+    return commandLine;
+}
+
+// Launch a process and (optionally) capture its stdout. Replaces the POSIX
+// fork/exec/pipe/waitpid model with CreateProcess + anonymous pipe + wait.
+bool spawnProcess(const std::vector<std::string>& args, std::string* output) {
+    if (args.empty()) {
+        return false;
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = nullptr;
+
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (output) {
+        if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) {
+            return false;
+        }
+        // The read end must not be inherited by the child.
+        SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+    }
+
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    if (output) {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = writePipe;
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    }
+
+    PROCESS_INFORMATION pi{};
+    std::string commandLine = buildCommandLine(args);
+    std::vector<char> mutableCommandLine(commandLine.begin(), commandLine.end());
+    mutableCommandLine.push_back('\0');
+
+    const BOOL created = CreateProcessA(
+        nullptr,
+        mutableCommandLine.data(),
+        nullptr,
+        nullptr,
+        output ? TRUE : FALSE,
+        0,
+        nullptr,
+        nullptr,
+        &si,
+        &pi);
+
+    if (!created) {
+        if (output) {
+            CloseHandle(readPipe);
+            CloseHandle(writePipe);
+        }
+        return false;
+    }
+
+    if (output) {
+        // Close our copy of the write end so the read loop terminates on exit.
+        CloseHandle(writePipe);
+        output->clear();
+        char buffer[4096];
+        DWORD readCount = 0;
+        while (ReadFile(readPipe, buffer, sizeof(buffer), &readCount, nullptr) && readCount > 0) {
+            output->append(buffer, static_cast<size_t>(readCount));
+        }
+        CloseHandle(readPipe);
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return exitCode == 0;
+}
+
+bool runProcess(const std::vector<std::string>& args) {
+    return spawnProcess(args, nullptr);
+}
+
+bool runProcessCapture(const std::vector<std::string>& args, std::string& output) {
+    output.clear();
+    return spawnProcess(args, &output);
+}
+
+#else
 
 bool runProcess(const std::vector<std::string>& args) {
     if (args.empty()) {
@@ -176,6 +317,8 @@ bool runProcessCapture(const std::vector<std::string>& args, std::string& output
 
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+
+#endif
 
 std::string compilerDriver() {
     const char* cc = std::getenv("CC");
@@ -299,7 +442,12 @@ std::optional<fs::path> createMultiboot2HeaderObject(const Targeting::TargetSpec
         return std::nullopt;
     }
 
-    std::string baseName = "multiboot2-" + std::to_string(getpid()) + "-" + std::to_string(counter++);
+#if defined(_WIN32)
+    const auto processId = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const auto processId = static_cast<unsigned long>(getpid());
+#endif
+    std::string baseName = "multiboot2-" + std::to_string(processId) + "-" + std::to_string(counter++);
     fs::path asmPath = tempDir / (baseName + ".S");
     fs::path objPath = tempDir / (baseName + ".o");
 
@@ -436,7 +584,12 @@ std::vector<std::string> getSystemLibraryPaths() {
             continue;
         }
 
-        for (const auto& path : split(line.substr(equals + 1), ':')) {
+#if defined(_WIN32)
+        const char pathSeparator = ';';
+#else
+        const char pathSeparator = ':';
+#endif
+        for (const auto& path : split(line.substr(equals + 1), pathSeparator)) {
             if (fs::is_directory(path)) {
                 paths.push_back(path);
             }

@@ -140,9 +140,10 @@ bool CompilerDriver::compileFile(const std::string& path,
             outPath = fs::path(path).stem().string() + ".ll";
         }
         if (config_.inputs.size() > 1 || config_.outputFile.empty()) {
-            outPath = (config_.objectsDir.empty() ? fs::path(path).parent_path()
-                                                  : fs::path(config_.objectsDir)) /
-                      (fs::path(path).stem().string() + ".ll");
+            outPath = ((config_.objectsDir.empty() ? fs::path(path).parent_path()
+                                                    : fs::path(config_.objectsDir)) /
+                       (fs::path(path).stem().string() + ".ll"))
+                          .string();
             if (!config_.objectsDir.empty()) {
                 std::error_code ec;
                 fs::create_directories(config_.objectsDir, ec);
