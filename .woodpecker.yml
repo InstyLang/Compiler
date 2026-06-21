@@ -1,0 +1,24 @@
+# Woodpecker CI pipeline for the Insty Compiler.
+# Uses the locally-built insty-ci:llvm22 image (clang/lld/llvm 22.1.7 + deps).
+# `pull` defaults to false, so the local image is used without a registry pull.
+
+steps:
+  - name: configure
+    image: insty-ci:llvm22
+    commands:
+      - cmake -S . -B build -G Ninja
+        -DINSTY_LLVM_ROOT=/usr/lib/llvm-22
+        -DCMAKE_C_COMPILER=clang
+        -DCMAKE_CXX_COMPILER=clang++
+        -DINSTY_BUILD_TESTS=ON
+
+  - name: build
+    image: insty-ci:llvm22
+    commands:
+      - ninja -C build
+      - test -x build/insty
+
+  - name: test
+    image: insty-ci:llvm22
+    commands:
+      - ctest --test-dir build --output-on-failure
