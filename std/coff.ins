@@ -30,7 +30,7 @@ module coff
 
 // --- little-endian field reads -------------------------------------------
 
-fun rd_u16(u64 addr) -> u32 {
+export fun rd_u16(u64 addr) -> u32 {
     unsafe {
         u16* p = cast<u16*>(addr)
         return cast<u32>(p[0])
@@ -38,7 +38,7 @@ fun rd_u16(u64 addr) -> u32 {
     return 0
 }
 
-fun rd_u32(u64 addr) -> u32 {
+export fun rd_u32(u64 addr) -> u32 {
     unsafe {
         u32* p = cast<u32*>(addr)
         return p[0]
@@ -46,7 +46,7 @@ fun rd_u32(u64 addr) -> u32 {
     return 0
 }
 
-fun rd_u64(u64 addr) -> u64 {
+export fun rd_u64(u64 addr) -> u64 {
     unsafe {
         u64* p = cast<u64*>(addr)
         return p[0]
@@ -57,12 +57,12 @@ fun rd_u64(u64 addr) -> u64 {
 // --- header navigation ---------------------------------------------------
 
 // Offset of the NT headers within the file (DOS e_lfanew @ 0x3C).
-fun nt_offset(u64 base) -> u32 {
+export fun nt_offset(u64 base) -> u32 {
     return rd_u32(base + 60)
 }
 
 // Address of the optional header (PE32+ standard/windows fields).
-fun opt_header(u64 base) -> u64 {
+export fun opt_header(u64 base) -> u64 {
     u64 nt = cast<u64>(nt_offset(base))
     // Signature(4) + FileHeader(20) = optional header at nt + 24.
     return base + nt + 24
@@ -70,7 +70,7 @@ fun opt_header(u64 base) -> u64 {
 
 // Validate DOS 'MZ' and NT 'PE\0\0' signatures and the PE32+ magic.
 // Returns true when the buffer looks like a PE32+ image.
-fun is_pe32plus(u64 base) -> bool {
+export fun is_pe32plus(u64 base) -> bool {
     if rd_u16(base) != 0x5a4d {
         return false
     }
@@ -84,23 +84,23 @@ fun is_pe32plus(u64 base) -> bool {
     return true
 }
 
-fun image_base(u64 base) -> u64 {
+export fun image_base(u64 base) -> u64 {
     return rd_u64(opt_header(base) + 24)
 }
 
-fun size_of_image(u64 base) -> u32 {
+export fun size_of_image(u64 base) -> u32 {
     return rd_u32(opt_header(base) + 56)
 }
 
-fun size_of_headers(u64 base) -> u32 {
+export fun size_of_headers(u64 base) -> u32 {
     return rd_u32(opt_header(base) + 60)
 }
 
-fun entry_point_rva(u64 base) -> u32 {
+export fun entry_point_rva(u64 base) -> u32 {
     return rd_u32(opt_header(base) + 16)
 }
 
-fun section_count(u64 base) -> u32 {
+export fun section_count(u64 base) -> u32 {
     u64 nt = base + cast<u64>(nt_offset(base))
     // FileHeader.NumberOfSections is at NT signature + 4 + 2.
     return rd_u16(nt + 6)
@@ -108,7 +108,7 @@ fun section_count(u64 base) -> u32 {
 
 // Address of the first section header. The section table follows the
 // optional header, whose size is FileHeader.SizeOfOptionalHeader (@ +16).
-fun section_table(u64 base) -> u64 {
+export fun section_table(u64 base) -> u64 {
     u64 nt = base + cast<u64>(nt_offset(base))
     u32 optSize = rd_u16(nt + 20)
     // optional header starts at nt + 24.
@@ -121,7 +121,7 @@ fun section_table(u64 base) -> u64 {
 // the destination image at `dest`. `dest` must be a zeroed region at least
 // size_of_image(src) bytes (so .bss-style uninitialised sections read 0).
 // memcpy is open-coded so the module stays freestanding.
-fun copy_bytes(u64 dest, u64 src, u64 n) -> void {
+export fun copy_bytes(u64 dest, u64 src, u64 n) -> void {
     unsafe {
         u8* d = cast<u8*>(dest)
         u8* s = cast<u8*>(src)
@@ -133,7 +133,7 @@ fun copy_bytes(u64 dest, u64 src, u64 n) -> void {
     }
 }
 
-fun zero_bytes(u64 dest, u64 n) -> void {
+export fun zero_bytes(u64 dest, u64 n) -> void {
     unsafe {
         u8* d = cast<u8*>(dest)
         u64 i = 0
@@ -148,7 +148,7 @@ fun zero_bytes(u64 dest, u64 n) -> void {
 // down the headers then each section at its VirtualAddress. Returns the
 // entry point address within dest (dest + entry RVA), or 0 if `src` is not
 // a PE32+ image.
-fun map_image(u64 dest, u64 src) -> u64 {
+export fun map_image(u64 dest, u64 src) -> u64 {
     if !is_pe32plus(src) {
         return 0
     }
@@ -181,7 +181,7 @@ fun map_image(u64 dest, u64 src) -> u64 {
 // actually landed (`dest`). `headerSrc` is the original file buffer (used
 // only to read the base-relocation directory RVA/size; the patched bytes
 // live in `dest`). A delta of 0 is a no-op. Returns true on success.
-fun apply_relocations(u64 dest, u64 headerSrc) -> bool {
+export fun apply_relocations(u64 dest, u64 headerSrc) -> bool {
     if !is_pe32plus(headerSrc) {
         return false
     }

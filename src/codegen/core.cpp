@@ -409,8 +409,10 @@ bool CodeGenerator::generate(const std::shared_ptr<AST::ProgramRoot>& program,
                                                   g.type->isSigned);
                 }
             }
+            auto linkage = g.isExported ? llvm::GlobalValue::ExternalLinkage
+                                        : llvm::GlobalValue::InternalLinkage;
             auto* gv = new llvm::GlobalVariable(
-                *module, ty, g.isConst, llvm::GlobalValue::InternalLinkage, init, g.name);
+                *module, ty, g.isConst, linkage, init, g.name);
             gv->setAlignment(llvm::MaybeAlign());
             state.globals[g.name] = {gv, g.type};
         }

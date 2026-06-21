@@ -66,6 +66,7 @@ void Checker::declareStruct(AST::StructDeclaration* node) {
     if (!node) return;
     StructInfo info;
     info.name = node->name;
+    info.isExported = node->isExported;
     if (const auto* a = findAttr(node->attributes, "packed")) {
         info.packed = true;
         (void)a;
@@ -84,6 +85,7 @@ void Checker::declareEnum(AST::EnumDeclaration* node) {
     if (!node) return;
     EnumInfo info;
     info.name = node->name;
+    info.isExported = node->isExported;
     std::string underlying = node->underlyingType.empty() ? "i32" : node->underlyingType;
     info.underlying = resolveTypeSpelling(underlying, node);
     Types::TypeRef enumType = types_.namedType(Types::Kind::Enum, node->name);
@@ -107,6 +109,7 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
 
     StructInfo sinfo;
     sinfo.name = node->name;
+    sinfo.isExported = node->isExported;
     std::vector<std::pair<std::string, Types::TypeRef>> fields;
     for (const auto& f : node->fields) {
         Types::TypeRef ft = resolveTypeSpelling(f.type, node);
@@ -118,6 +121,7 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
 
     ClassInfo cinfo;
     cinfo.name = node->name;
+    cinfo.isExported = node->isExported;
     cinfo.fields = fields;
 
     Types::TypeRef classType = types_.namedType(Types::Kind::Class, node->name);
@@ -147,6 +151,7 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
         fi.returnType = m.isConstructor ? types_.voidType()
                                         : resolveTypeSpelling(m.returnType, node);
         fi.isExternal = false;
+        fi.isExported = node->isExported;
         fi.decl = nullptr;
         result_.functions.push_back(fi);
 
@@ -201,6 +206,7 @@ void Checker::declareGlobal(AST::VariableDeclarationExpr* node) {
     GlobalInfo info;
     info.name = node->identifier;
     info.isConst = node->isConst;
+    info.isExported = node->isExported;
     if (!node->typeHint.empty()) {
         info.type = resolveTypeSpelling(node->typeHint, node);
         if (node->isArray && info.type && !info.type->isError() &&
@@ -263,6 +269,7 @@ void Checker::declareFunction(AST::FunctionDeclaration* node) {
     FunctionInfo info;
     info.name = node->name;
     info.decl = node;
+    info.isExported = node->isExported;
 
     bool isExtern = false;
     info.mangledName = computeMangledName(node, isExtern);

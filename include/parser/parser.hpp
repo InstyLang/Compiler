@@ -40,6 +40,7 @@ public:
     AST::NodeList parseBlock();
     AST::NodePtr parseFunctionDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseExternDeclaration(std::vector<AST::Attribute> attributes);
+    AST::NodePtr parseExportDeclaration();
     AST::NodePtr parseStructDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseClassDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseEnumDeclaration();

@@ -285,11 +285,16 @@ int CompilerDriver::runSingleFilePipeline() {
             return 1;
         }
         for (const auto& fn : mod.exportedFunctions) {
-            if (!fn.isExternal) {
+            // Private-by-default: only `export`ed symbols are visible to modules
+            // that import this one. Exported externs propagate as external decls.
+            if (fn.isExported) {
                 imported.push_back(fn);
             }
         }
         for (const auto& s : mod.exportedStructs) {
+            if (!s.isExported) {
+                continue;
+            }
             bool present = false;
             for (const auto& existing : importedStructs) {
                 if (existing.name == s.name) { present = true; break; }

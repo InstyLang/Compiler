@@ -39,6 +39,8 @@ AST::NodePtr Parser::parseTopLevel() {
             return parseFunctionDeclaration({});
         case TokenType::KwExtern:
             return parseExternDeclaration({});
+        case TokenType::KwExport:
+            return parseExportDeclaration();
         case TokenType::KwStruct:
             advance();
             return parseStructDeclaration({});

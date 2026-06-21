@@ -6,7 +6,7 @@
 module mem
 
 // Copy n bytes from src to dst. Regions must not overlap.
-fun copy(u8* dst, u8* src, u64 n) -> void {
+export fun copy(u8* dst, u8* src, u64 n) -> void {
     unsafe {
         u64 i = 0
         while i < n {
@@ -17,7 +17,7 @@ fun copy(u8* dst, u8* src, u64 n) -> void {
 }
 
 // Fill n bytes at p with the given value.
-fun set(u8* p, u8 value, u64 n) -> void {
+export fun set(u8* p, u8 value, u64 n) -> void {
     unsafe {
         u64 i = 0
         while i < n {
@@ -28,12 +28,12 @@ fun set(u8* p, u8 value, u64 n) -> void {
 }
 
 // Zero n bytes at p.
-fun zero(u8* p, u64 n) -> void {
+export fun zero(u8* p, u64 n) -> void {
     set(p, 0, n)
 }
 
 // Compare n bytes; returns true when the regions are identical.
-fun eq(u8* a, u8* b, u64 n) -> bool {
+export fun eq(u8* a, u8* b, u64 n) -> bool {
     unsafe {
         u64 i = 0
         while i < n {

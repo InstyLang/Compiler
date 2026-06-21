@@ -114,6 +114,7 @@ struct FunctionDeclaration : ExprAST {
     NodeList body;
     bool hasBody = true;
     bool isExtern = false;   // declared with the `extern` keyword (external C symbol)
+    bool isExported = false; // declared with the `export` keyword (visible to importers)
     NodeType nodeType() const override { return NodeType::FunctionDeclaration; }
 };
 
@@ -126,6 +127,7 @@ struct VariableDeclarationExpr : ExprAST {
     bool isConst = false;
     bool isArray = false;
     int arraySize = 0;
+    bool isExported = false; // declared with the `export` keyword (visible to importers)
     NodeType nodeType() const override { return NodeType::VariableDeclaration; }
 };
 
@@ -351,6 +353,7 @@ struct StructDeclaration : ExprAST {
     std::vector<std::string> genericParams;
     std::vector<Attribute> attributes;
     std::vector<StructField> fields;
+    bool isExported = false; // declared with the `export` keyword (visible to importers)
     NodeType nodeType() const override { return NodeType::StructDeclaration; }
 };
 
@@ -364,6 +367,7 @@ struct EnumDeclaration : ExprAST {
     std::string name;
     std::string underlyingType;
     std::vector<EnumVariant> variants;
+    bool isExported = false; // declared with the `export` keyword (visible to importers)
     NodeType nodeType() const override { return NodeType::EnumDeclaration; }
 };
 
@@ -385,6 +389,7 @@ struct ClassDeclaration : ExprAST {
     std::vector<Attribute> attributes;
     std::vector<StructField> fields;
     std::vector<Method> methods;
+    bool isExported = false; // declared with the `export` keyword (visible to importers)
     NodeType nodeType() const override { return NodeType::ClassDeclaration; }
 };
 

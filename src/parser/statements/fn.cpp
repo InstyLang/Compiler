@@ -65,3 +65,78 @@ AST::NodePtr Parser::parseExternDeclaration(std::vector<AST::Attribute> attribut
     }
     return decl;
 }
+
+// `export <declaration>` marks a top-level declaration as visible to modules
+// that import this one. Without `export`, declarations are private to their
+// module (private-by-default). This wraps the normal top-level declaration
+// parsers and flips the `isExported` flag on whatever node is produced. It
+// accepts an optional leading `[attrs]` block and the `extern` keyword, e.g.
+// `export fun`, `export extern fun`, `export [conv(fastcc)] fun`, `export
+// struct`, `export class`, `export enum`, and `export <global var>`.
+AST::NodePtr Parser::parseExportDeclaration() {
+    expect(TokenType::KwExport, "E1416", "'export' to begin an exported declaration");
+    match(TokenType::KwExport);
+    skipNewlines();
+
+    std::vector<AST::Attribute> attrs;
+    if (check(TokenType::LBracket)) {
+        attrs = parseAttributes();
+        skipNewlines();
+    }
+
+    AST::NodePtr decl;
+    switch (current().type) {
+        case TokenType::KwFun:
+            decl = parseFunctionDeclaration(std::move(attrs));
+            break;
+        case TokenType::KwExtern:
+            decl = parseExternDeclaration(std::move(attrs));
+            break;
+        case TokenType::KwStruct:
+            advance();
+            decl = parseStructDeclaration(std::move(attrs));
+            break;
+        case TokenType::KwClass:
+            advance();
+            decl = parseClassDeclaration(std::move(attrs));
+            break;
+        case TokenType::KwEnum:
+            decl = parseEnumDeclaration();
+            break;
+        default:
+            if (!attrs.empty()) {
+                error("E1400", "attributes must precede a declaration",
+                      "place [..] before fun/extern/struct/class/enum");
+                return nullptr;
+            }
+            // Allow `export <global var>` (e.g. `export const i32 X = 1`).
+            decl = parseStatement();
+            break;
+    }
+
+    if (!decl) {
+        return nullptr;
+    }
+    switch (decl->nodeType()) {
+        case AST::NodeType::FunctionDeclaration:
+            static_cast<AST::FunctionDeclaration*>(decl.get())->isExported = true;
+            break;
+        case AST::NodeType::StructDeclaration:
+            static_cast<AST::StructDeclaration*>(decl.get())->isExported = true;
+            break;
+        case AST::NodeType::ClassDeclaration:
+            static_cast<AST::ClassDeclaration*>(decl.get())->isExported = true;
+            break;
+        case AST::NodeType::EnumDeclaration:
+            static_cast<AST::EnumDeclaration*>(decl.get())->isExported = true;
+            break;
+        case AST::NodeType::VariableDeclaration:
+            static_cast<AST::VariableDeclarationExpr*>(decl.get())->isExported = true;
+            break;
+        default:
+            error("E1417", "`export` must precede a function, type, or global declaration",
+                  "e.g. `export fun name(...)` or `export struct Name { ... }`");
+            break;
+    }
+    return decl;
+}

@@ -6,7 +6,7 @@
 module math
 
 // Absolute value.
-fun abs(i64 n) -> i64 {
+export fun abs(i64 n) -> i64 {
     if n < 0 {
         return 0 - n
     }
@@ -14,7 +14,7 @@ fun abs(i64 n) -> i64 {
 }
 
 // Smaller of two values.
-fun min(i64 a, i64 b) -> i64 {
+export fun min(i64 a, i64 b) -> i64 {
     if a < b {
         return a
     }
@@ -22,7 +22,7 @@ fun min(i64 a, i64 b) -> i64 {
 }
 
 // Larger of two values.
-fun max(i64 a, i64 b) -> i64 {
+export fun max(i64 a, i64 b) -> i64 {
     if a > b {
         return a
     }
@@ -30,7 +30,7 @@ fun max(i64 a, i64 b) -> i64 {
 }
 
 // Clamp v into the inclusive range [lo, hi].
-fun clamp(i64 v, i64 lo, i64 hi) -> i64 {
+export fun clamp(i64 v, i64 lo, i64 hi) -> i64 {
     if v < lo {
         return lo
     }
@@ -41,7 +41,7 @@ fun clamp(i64 v, i64 lo, i64 hi) -> i64 {
 }
 
 // -1, 0, or 1 depending on the sign of n.
-fun sign(i64 n) -> i64 {
+export fun sign(i64 n) -> i64 {
     if n < 0 {
         return 0 - 1
     }
@@ -52,7 +52,7 @@ fun sign(i64 n) -> i64 {
 }
 
 // base raised to the exp power (exp < 0 yields 0, integer semantics).
-fun pow(i64 base, i64 exp) -> i64 {
+export fun pow(i64 base, i64 exp) -> i64 {
     if exp < 0 {
         return 0
     }

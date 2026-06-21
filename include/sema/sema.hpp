@@ -21,6 +21,7 @@ struct FunctionInfo {
     Types::TypeRef returnType = nullptr;
     bool isExternal = false;
     bool isUnsafe = false;
+    bool isExported = false;
     AST::FunctionDeclaration* decl = nullptr;
 };
 
@@ -29,6 +30,7 @@ struct StructInfo {
     std::vector<std::pair<std::string, Types::TypeRef>> fields;
     bool packed = false;
     int align = 0;
+    bool isExported = false;
 };
 
 struct ClassInfo {
@@ -39,18 +41,21 @@ struct ClassInfo {
     std::vector<Types::TypeRef> constructorParams;
     std::map<std::string, std::string> methodMangled;
     std::map<std::string, std::string> operatorMangled;
+    bool isExported = false;
 };
 
 struct EnumInfo {
     std::string name;
     Types::TypeRef underlying = nullptr;
     std::map<std::string, long long> variants;
+    bool isExported = false;
 };
 
 struct GlobalInfo {
     std::string name;
     Types::TypeRef type = nullptr;
     bool isConst = false;
+    bool isExported = false;
 };
 
 struct GenericInstantiation {

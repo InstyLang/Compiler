@@ -34,7 +34,7 @@ u64 g_system_table = 0
 
 // Record the pointers the firmware passed to the entry point.
 // Must be called before any other function in this module.
-fun init(u8* image_handle, u8* system_table) -> void {
+export fun init(u8* image_handle, u8* system_table) -> void {
     unsafe {
         g_image_handle = cast<u64>(image_handle)
         g_system_table = cast<u64>(system_table)
@@ -44,7 +44,7 @@ fun init(u8* image_handle, u8* system_table) -> void {
 // Internal: pointer to the console output protocol (SimpleTextOutput).
 // Viewing the System Table as an array of 8-byte slots, ConOut is
 // slot 8 (byte offset 64).
-fun con_out() -> u64 {
+export fun con_out() -> u64 {
     unsafe {
         u64* st = cast<u64*>(g_system_table)
         return st[8]
@@ -53,7 +53,7 @@ fun con_out() -> u64 {
 }
 
 // Internal: pointer to the Boot Services table (System Table slot 12).
-fun boot_services() -> u64 {
+export fun boot_services() -> u64 {
     unsafe {
         u64* st = cast<u64*>(g_system_table)
         return st[12]
@@ -65,7 +65,7 @@ fun boot_services() -> u64 {
 // The SimpleTextOutput protocol is a struct of function pointers;
 // OutputString is the second entry (slot 1). Like all EFI protocol
 // functions, it takes the protocol pointer itself as first argument.
-fun output_ucs2(u64 buf) -> void {
+export fun output_ucs2(u64 buf) -> void {
     unsafe {
         u64 proto = con_out()
         u64* vt = cast<u64*>(proto)
@@ -75,7 +75,7 @@ fun output_ucs2(u64 buf) -> void {
 
 // Internal: print a run of ASCII bytes by widening them into a
 // stack-allocated UCS-2 buffer, flushing in chunks.
-fun print_bytes(u8* src, i64 len) -> void {
+export fun print_bytes(u8* src, i64 len) -> void {
     u16[128] buf;
     unsafe {
         u16* dst = cast<u16*>(&buf)
@@ -107,14 +107,14 @@ fun print_bytes(u8* src, i64 len) -> void {
 }
 
 // Print a string to the firmware console without a trailing newline.
-fun print(text s) -> void {
+export fun print(text s) -> void {
     unsafe {
         print_bytes(cast<u8*>(s), cast<i64>(@strlen(s)))
     }
 }
 
 // Print a string to the firmware console followed by a newline.
-fun println(text s) -> void {
+export fun println(text s) -> void {
     print(s)
     print("\n")
 }
@@ -123,14 +123,14 @@ fun println(text s) -> void {
 // bypassing runtime byte-widening. Pair with @utf16("..."):
 //     uefi.print_wide(@utf16("Ready\r\n"))
 // The buffer must be NUL-terminated, which @utf16 guarantees.
-fun print_wide(u16* s) -> void {
+export fun print_wide(u16* s) -> void {
     unsafe {
         output_ucs2(cast<u64>(s))
     }
 }
 
 // Print a signed integer in decimal without a trailing newline.
-fun print_int(i64 n) -> void {
+export fun print_int(i64 n) -> void {
     u8[32] buf;
     unsafe {
         u8* p = cast<u8*>(&buf)
@@ -161,14 +161,14 @@ fun print_int(i64 n) -> void {
 }
 
 // Print a signed integer in decimal followed by a newline.
-fun println_int(i64 n) -> void {
+export fun println_int(i64 n) -> void {
     print_int(n)
     print("\n")
 }
 
 // Clear the screen. ClearScreen is slot 6 of the SimpleTextOutput
 // protocol.
-fun clear() -> void {
+export fun clear() -> void {
     unsafe {
         u64 proto = con_out()
         u64* vt = cast<u64*>(proto)
@@ -179,7 +179,7 @@ fun clear() -> void {
 // Busy-wait for the given number of microseconds using the Boot
 // Services Stall function (slot 31 of the Boot Services table; the
 // table starts with a 24-byte header, so slot 31 is byte offset 248).
-fun stall(i64 microseconds) -> void {
+export fun stall(i64 microseconds) -> void {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         fnCall<u64>(bs[31], microseconds)
@@ -206,7 +206,7 @@ i64 EFI_LOADER_CODE = 1
 
 // Allocate `size` bytes from the firmware pool. Returns the allocation
 // address, or 0 on failure. `mem_type` is one of the EFI_* constants above.
-fun alloc_pool(i64 mem_type, u64 size) -> u64 {
+export fun alloc_pool(i64 mem_type, u64 size) -> u64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         u64 out = 0
@@ -221,7 +221,7 @@ fun alloc_pool(i64 mem_type, u64 size) -> u64 {
 }
 
 // Return a pool allocation obtained from alloc_pool to the firmware.
-fun free_pool(u64 ptr) -> i64 {
+export fun free_pool(u64 ptr) -> i64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         return fnCall<i64>(bs[9], ptr)
@@ -242,7 +242,7 @@ u64 g_map_desc_size = 0
 // Returns the EFI_STATUS; on success the g_map_* globals describe it.
 // Allocating the buffer grows the map slightly, so we ask once for the
 // size, pad generously, then fetch.
-fun get_memory_map() -> i64 {
+export fun get_memory_map() -> i64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
 
@@ -284,7 +284,7 @@ fun get_memory_map() -> i64 {
 }
 
 // Number of descriptors in the last get_memory_map() snapshot.
-fun memory_map_count() -> i64 {
+export fun memory_map_count() -> i64 {
     unsafe {
         if g_map_desc_size == 0 {
             return 0
@@ -296,13 +296,13 @@ fun memory_map_count() -> i64 {
 
 // Address of the descriptor buffer from the last get_memory_map(). Exposed
 // as a function because module globals are not visible across imports.
-fun memory_map_buffer() -> u64 {
+export fun memory_map_buffer() -> u64 {
     return g_map_buffer
 }
 
 // Stride between memory-map descriptors (DescriptorSize). Descriptors may be
 // larger than any fixed struct, so iterate using this, never sizeof.
-fun memory_map_descriptor_size() -> u64 {
+export fun memory_map_descriptor_size() -> u64 {
     return g_map_desc_size
 }
 
@@ -312,7 +312,7 @@ fun memory_map_descriptor_size() -> u64 {
 // has: Type u32 @0, PhysicalStart u64 @8, VirtualStart @16,
 // NumberOfPages u64 @24, Attribute @32. Helpers read one descriptor at `d`.
 
-fun descriptor_type(u64 d) -> u32 {
+export fun descriptor_type(u64 d) -> u32 {
     unsafe {
         u32* p = cast<u32*>(d)
         return p[0]
@@ -320,7 +320,7 @@ fun descriptor_type(u64 d) -> u32 {
     return 0
 }
 
-fun descriptor_phys_start(u64 d) -> u64 {
+export fun descriptor_phys_start(u64 d) -> u64 {
     unsafe {
         u64* p = cast<u64*>(d + 8)
         return p[0]
@@ -328,7 +328,7 @@ fun descriptor_phys_start(u64 d) -> u64 {
     return 0
 }
 
-fun descriptor_pages(u64 d) -> u64 {
+export fun descriptor_pages(u64 d) -> u64 {
     unsafe {
         u64* p = cast<u64*>(d + 24)
         return p[0]
@@ -342,7 +342,7 @@ fun descriptor_pages(u64 d) -> u64 {
 //   EfiConventional(7)/BootServicesCode(3)/BootServicesData(4) -> Free
 //   MemoryMappedIO(11)/IOPortSpace(12)                          -> MMIO
 //   everything else (loader, runtime, ACPI, unusable, ...)      -> Reserved
-fun classify_memory_type(u32 efi_type) -> u32 {
+export fun classify_memory_type(u32 efi_type) -> u32 {
     if efi_type == 7 {
         return 1
     }
@@ -363,7 +363,7 @@ fun classify_memory_type(u32 efi_type) -> u32 {
 
 // Locate a Boot Services protocol by GUID. `guid` points at a 16-byte
 // EFI_GUID. Returns the protocol interface pointer, or 0 if not found.
-fun locate_protocol(u64 guid) -> u64 {
+export fun locate_protocol(u64 guid) -> u64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         u64 iface = 0
@@ -381,7 +381,7 @@ fun locate_protocol(u64 guid) -> u64 {
 // Must be preceded by a fresh get_memory_map() so the map key is current;
 // the firmware rejects a stale key. After this returns EFI_SUCCESS the
 // Boot Services are gone - do not call any other uefi.* function.
-fun exit_boot_services() -> i64 {
+export fun exit_boot_services() -> i64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         return fnCall<i64>(bs[29], g_image_handle, g_map_key)
@@ -413,7 +413,7 @@ u64 g_gop = 0
 
 // Locate the Graphics Output Protocol. Returns the protocol pointer (also
 // cached for the framebuffer accessors) or 0 if the firmware lacks GOP.
-fun gop_init() -> u64 {
+export fun gop_init() -> u64 {
     u64[2] guid;
     unsafe {
         u64* g = cast<u64*>(&guid)
@@ -426,7 +426,7 @@ fun gop_init() -> u64 {
 }
 
 // Internal: pointer to the GOP Mode block (protocol slot 3).
-fun gop_mode() -> u64 {
+export fun gop_mode() -> u64 {
     unsafe {
         u64* gop = cast<u64*>(g_gop)
         return gop[3]
@@ -435,7 +435,7 @@ fun gop_mode() -> u64 {
 }
 
 // Linear framebuffer base address (0 if GOP not initialised).
-fun framebuffer_base() -> u64 {
+export fun framebuffer_base() -> u64 {
     unsafe {
         u64 mode = gop_mode()
         u64* m = cast<u64*>(mode + 24)
@@ -445,7 +445,7 @@ fun framebuffer_base() -> u64 {
 }
 
 // Framebuffer size in bytes.
-fun framebuffer_size() -> u64 {
+export fun framebuffer_size() -> u64 {
     unsafe {
         u64 mode = gop_mode()
         u64* m = cast<u64*>(mode + 32)
@@ -455,7 +455,7 @@ fun framebuffer_size() -> u64 {
 }
 
 // Horizontal resolution in pixels.
-fun screen_width() -> i64 {
+export fun screen_width() -> i64 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -467,7 +467,7 @@ fun screen_width() -> i64 {
 }
 
 // Vertical resolution in pixels.
-fun screen_height() -> i64 {
+export fun screen_height() -> i64 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -479,7 +479,7 @@ fun screen_height() -> i64 {
 }
 
 // Pixels per scan line (the framebuffer stride; may exceed the width).
-fun pixels_per_scanline() -> i64 {
+export fun pixels_per_scanline() -> i64 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -493,7 +493,7 @@ fun pixels_per_scanline() -> i64 {
 // Pixel format of the active mode (EFI_GRAPHICS_PIXEL_FORMAT, ModeInfo
 // offset 12): 0 = RGBReserved8, 1 = BGRReserved8, 2 = BitMask, 3 = BltOnly.
 // A bootloader hands this to the kernel so it knows the byte order to write.
-fun pixel_format() -> u32 {
+export fun pixel_format() -> u32 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -507,7 +507,7 @@ fun pixel_format() -> u32 {
 // Pixel color masks (ModeInfo PixelInformation: Red @16, Green @20,
 // Blue @24). Only meaningful when pixel_format() == 2 (BitMask); zero
 // otherwise.
-fun pixel_red_mask() -> u32 {
+export fun pixel_red_mask() -> u32 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -518,7 +518,7 @@ fun pixel_red_mask() -> u32 {
     return 0
 }
 
-fun pixel_green_mask() -> u32 {
+export fun pixel_green_mask() -> u32 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -529,7 +529,7 @@ fun pixel_green_mask() -> u32 {
     return 0
 }
 
-fun pixel_blue_mask() -> u32 {
+export fun pixel_blue_mask() -> u32 {
     unsafe {
         u64 mode = gop_mode()
         u64* mp = cast<u64*>(mode + 8)
@@ -542,7 +542,7 @@ fun pixel_blue_mask() -> u32 {
 
 // Paint a single 32-bit pixel (0x00RRGGBB) at (x, y). Bounds are the
 // caller's responsibility. Uses the scanline stride, not the width.
-fun put_pixel(i64 x, i64 y, u32 color) -> void {
+export fun put_pixel(i64 x, i64 y, u32 color) -> void {
     unsafe {
         u64 base = framebuffer_base()
         if base == 0 {
@@ -556,7 +556,7 @@ fun put_pixel(i64 x, i64 y, u32 color) -> void {
 }
 
 // Fill the entire framebuffer with a solid color.
-fun clear_screen(u32 color) -> void {
+export fun clear_screen(u32 color) -> void {
     unsafe {
         u64 base = framebuffer_base()
         if base == 0 {
@@ -594,7 +594,7 @@ i64 EFI_ALLOCATE_ADDRESS = 2
 // Allocate `pages` 4 KiB pages. For AnyPages, `addr` is ignored and the
 // chosen base is returned. For Address, the firmware tries to honour `addr`.
 // Returns the page base, or 0 on failure.
-fun alloc_pages(i64 alloc_type, i64 mem_type, u64 pages, u64 addr) -> u64 {
+export fun alloc_pages(i64 alloc_type, i64 mem_type, u64 pages, u64 addr) -> u64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         u64 mem = addr
@@ -610,7 +610,7 @@ fun alloc_pages(i64 alloc_type, i64 mem_type, u64 pages, u64 addr) -> u64 {
 }
 
 // Free a page range previously obtained from alloc_pages.
-fun free_pages(u64 addr, u64 pages) -> i64 {
+export fun free_pages(u64 addr, u64 pages) -> i64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         return fnCall<i64>(bs[6], addr, cast<i64>(pages))
@@ -627,7 +627,7 @@ fun free_pages(u64 addr, u64 pages) -> i64 {
 
 // Query `handle` for the protocol identified by the 16-byte EFI_GUID at
 // `guid`. Returns the interface pointer, or 0 if unsupported.
-fun handle_protocol(u64 handle, u64 guid) -> u64 {
+export fun handle_protocol(u64 handle, u64 guid) -> u64 {
     unsafe {
         u64* bs = cast<u64*>(boot_services())
         u64 iface = 0
@@ -652,7 +652,7 @@ u64 g_loaded_image_guid_lo = 0x11d295625b1b31a1
 u64 g_loaded_image_guid_hi = 0x3b7269c9a0003f8e
 
 // Resolve the LoadedImage protocol for our own image. Returns 0 on failure.
-fun loaded_image() -> u64 {
+export fun loaded_image() -> u64 {
     u64[2] guid;
     unsafe {
         u64* g = cast<u64*>(&guid)
@@ -664,7 +664,7 @@ fun loaded_image() -> u64 {
 }
 
 // The device handle our image was loaded from (LoadedImage offset 24).
-fun loaded_image_device(u64 li) -> u64 {
+export fun loaded_image_device(u64 li) -> u64 {
     unsafe {
         u64* p = cast<u64*>(li + 24)
         return p[0]
@@ -673,7 +673,7 @@ fun loaded_image_device(u64 li) -> u64 {
 }
 
 // The base address our image was loaded at (LoadedImage offset 64).
-fun loaded_image_base(u64 li) -> u64 {
+export fun loaded_image_base(u64 li) -> u64 {
     unsafe {
         u64* p = cast<u64*>(li + 64)
         return p[0]
@@ -706,7 +706,7 @@ u64 EFI_FILE_MODE_READ = 1
 
 // Open the root directory of the volume our image booted from. Returns the
 // root EFI_FILE_PROTOCOL pointer, or 0 on failure.
-fun open_root_volume() -> u64 {
+export fun open_root_volume() -> u64 {
     u64[2] guid;
     unsafe {
         u64 li = loaded_image()
@@ -737,7 +737,7 @@ fun open_root_volume() -> u64 {
 // Open a file named by a UCS-2 path (use @utf16("EFI\\BOOT\\KERNEL.EFI"))
 // relative to `dir` (typically the root from open_root_volume). Returns the
 // child EFI_FILE_PROTOCOL pointer, or 0 on failure.
-fun file_open(u64 dir, u16* path) -> u64 {
+export fun file_open(u64 dir, u16* path) -> u64 {
     unsafe {
         u64* vt = cast<u64*>(dir)
         u64 child = 0
@@ -754,7 +754,7 @@ fun file_open(u64 dir, u16* path) -> u64 {
 }
 
 // Close an open file handle (File slot 2).
-fun file_close(u64 file) -> void {
+export fun file_close(u64 file) -> void {
     unsafe {
         u64* vt = cast<u64*>(file)
         fnCall<u64>(vt[2], file)
@@ -764,7 +764,7 @@ fun file_close(u64 file) -> void {
 // Query the size in bytes of an open file via GetInfo (File slot 8) with
 // the EFI_FILE_INFO GUID. Uses a stack scratch buffer big enough for the
 // fixed fields plus a short name; returns 0 on failure.
-fun file_size(u64 file) -> u64 {
+export fun file_size(u64 file) -> u64 {
     u8[256] info;
     u64[2] guid;
     unsafe {
@@ -789,7 +789,7 @@ fun file_size(u64 file) -> u64 {
 
 // Read up to `size` bytes from an open file into `dest` (File slot 4).
 // Returns the number of bytes actually read, or 0 on failure.
-fun file_read(u64 file, u8* dest, u64 size) -> u64 {
+export fun file_read(u64 file, u8* dest, u64 size) -> u64 {
     unsafe {
         u64 n = size
         u64* p_n = &n
@@ -806,7 +806,7 @@ fun file_read(u64 file, u8* dest, u64 size) -> u64 {
 // Convenience: open a file by UCS-2 path, allocate a pool buffer of its
 // size, read it in, and close it. Returns the buffer (caller frees with
 // free_pool) and writes the byte count to ~out_size. Returns 0 on failure.
-fun load_file(u16* path, u64* out_size) -> u64 {
+export fun load_file(u16* path, u64* out_size) -> u64 {
     unsafe {
         out_size[0] = 0
         u64 root = open_root_volume()
@@ -856,7 +856,7 @@ u64 g_acpi10_guid_lo = 0x11d32d88eb9d2d30
 u64 g_acpi10_guid_hi = 0x4dc13f279000169a
 
 // Number of configuration table entries (System Table slot 13).
-fun config_table_count() -> u64 {
+export fun config_table_count() -> u64 {
     unsafe {
         u64* st = cast<u64*>(g_system_table)
         return st[13]
@@ -865,7 +865,7 @@ fun config_table_count() -> u64 {
 }
 
 // Pointer to the configuration table array (System Table slot 14).
-fun config_table() -> u64 {
+export fun config_table() -> u64 {
     unsafe {
         u64* st = cast<u64*>(g_system_table)
         return st[14]
@@ -874,7 +874,7 @@ fun config_table() -> u64 {
 }
 
 // Internal: does the 16-byte EFI_GUID at `entry` equal (lo, hi)?
-fun guid_matches(u64 entry, u64 lo, u64 hi) -> bool {
+export fun guid_matches(u64 entry, u64 lo, u64 hi) -> bool {
     unsafe {
         u64* g = cast<u64*>(entry)
         if g[0] != lo {
@@ -890,7 +890,7 @@ fun guid_matches(u64 entry, u64 lo, u64 hi) -> bool {
 
 // Find the ACPI RSDP pointer in the configuration table, preferring the
 // ACPI 2.0 entry over 1.0. Returns the RSDP address, or 0 if none.
-fun find_rsdp() -> u64 {
+export fun find_rsdp() -> u64 {
     unsafe {
         u64 count = config_table_count()
         u64 arr = config_table()
@@ -921,7 +921,7 @@ fun find_rsdp() -> u64 {
 // Call after gop_init(); a no-op if GOP is unavailable.
 
 // Internal: is width:height a 16:9 ratio?
-fun is_16x9(i64 w, i64 h) -> bool {
+export fun is_16x9(i64 w, i64 h) -> bool {
     if h == 0 {
         return false
     }
@@ -933,7 +933,7 @@ fun is_16x9(i64 w, i64 h) -> bool {
 
 // Query mode `mode_index`, returning its EFI_GRAPHICS_OUTPUT_MODE_INFORMATION
 // pointer (caller frees with free_pool), or 0 on error.
-fun gop_query_mode(u32 mode_index) -> u64 {
+export fun gop_query_mode(u32 mode_index) -> u64 {
     unsafe {
         u64* gop = cast<u64*>(g_gop)
         u64 info_size = 0
@@ -951,7 +951,7 @@ fun gop_query_mode(u32 mode_index) -> u64 {
 }
 
 // Switch the GOP to mode `mode_index` (SetMode, slot 1).
-fun gop_set_mode(u32 mode_index) -> i64 {
+export fun gop_set_mode(u32 mode_index) -> i64 {
     unsafe {
         u64* gop = cast<u64*>(g_gop)
         return fnCall<i64>(gop[1], g_gop, cast<i64>(cast<u64>(mode_index)))
@@ -960,7 +960,7 @@ fun gop_set_mode(u32 mode_index) -> i64 {
 }
 
 // Total number of modes the GOP advertises (Mode->MaxMode, byte offset 0).
-fun gop_max_mode() -> u32 {
+export fun gop_max_mode() -> u32 {
     unsafe {
         u64 mode = gop_mode()
         u32* m = cast<u32*>(mode)
@@ -972,7 +972,7 @@ fun gop_max_mode() -> u32 {
 // Select the best 16:9 framebuffer mode (prefer 1280x720). Returns the
 // chosen mode index, or leaves the current mode and returns it if no 16:9
 // mode is found.
-fun prefer_16x9() -> u32 {
+export fun prefer_16x9() -> u32 {
     unsafe {
         if g_gop == 0 {
             return 0

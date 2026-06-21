@@ -181,6 +181,32 @@ void testParser() {
     CHECK(parseClean("fun f() -> void {\n  while true {\n    break\n  }\n}\n"));
     CHECK(parseClean("fun f() -> void {\n  loop {\n    break\n  }\n}\n"));
 
+    {
+        // `export` marks a declaration as visible to importers; without it,
+        // top-level declarations are private to their module.
+        auto ex = parse("module m\n"
+                        "export fun pub() -> void {\n  return\n}\n"
+                        "fun priv() -> void {\n  return\n}\n"
+                        "export struct S { i32 a }\n");
+        std::shared_ptr<AST::FunctionDeclaration> pub;
+        std::shared_ptr<AST::FunctionDeclaration> priv;
+        std::shared_ptr<AST::StructDeclaration> st;
+        if (ex) {
+            for (const auto& top : ex->body) {
+                if (auto fn = AST::ast_cast<AST::FunctionDeclaration>(top)) {
+                    if (fn->name == "pub") pub = fn;
+                    if (fn->name == "priv") priv = fn;
+                } else if (auto s = AST::ast_cast<AST::StructDeclaration>(top)) {
+                    st = s;
+                }
+            }
+        }
+        CHECK(pub && pub->isExported);
+        CHECK(priv && !priv->isExported);
+        CHECK(st && st->isExported);
+        ErrorReporting::cleanupErrorReporter();
+    }
+
     auto broken = parse("fun f( -> {{{");
     CHECK(broken != nullptr);
     ErrorReporting::cleanupErrorReporter();

@@ -18,6 +18,7 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::KwAs:            return "KwAs";
         case TokenType::KwFun:           return "KwFun";
         case TokenType::KwExtern:        return "KwExtern";
+        case TokenType::KwExport:        return "KwExport";
         case TokenType::KwStruct:        return "KwStruct";
         case TokenType::KwClass:         return "KwClass";
         case TokenType::KwEnum:          return "KwEnum";
@@ -128,6 +129,7 @@ TokenType keywordTokenType(const std::string& word) {
         {"as",          TokenType::KwAs},
         {"fun",         TokenType::KwFun},
         {"extern",      TokenType::KwExtern},
+        {"export",      TokenType::KwExport},
         {"struct",      TokenType::KwStruct},
         {"class",       TokenType::KwClass},
         {"enum",        TokenType::KwEnum},

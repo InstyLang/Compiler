@@ -107,6 +107,12 @@ void Parser::predeclareTopLevel() {
             advance();
             continue;
         }
+        // `export <decl> ...` predeclares the same way the bare decl does; skip
+        // the leading `export` so the next iteration processes the declaration.
+        if (t == TokenType::KwExport) {
+            advance();
+            continue;
+        }
         if (t == TokenType::KwFun || t == TokenType::KwStruct ||
             t == TokenType::KwClass || t == TokenType::KwEnum) {
             advance();

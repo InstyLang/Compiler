@@ -50,8 +50,17 @@ llvm::Function* CodeGenerator::getOrDeclareFunction(const Sema::FunctionInfo& in
     llvm::Type* retTy = lowerType(info.returnType);
     llvm::FunctionType* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
 
+    // Private-by-default: a function defined in this module that is not
+    // `export`ed (and is not `main`) gets internal linkage so it is hidden from
+    // other translation units. Imported/external declarations and exported
+    // definitions keep external linkage so the linker can unify them.
+    llvm::Function::LinkageTypes linkage = llvm::Function::ExternalLinkage;
+    if (!info.isExternal && !info.isExported && info.name != "main") {
+        linkage = llvm::Function::InternalLinkage;
+    }
+
     llvm::Function* fn = llvm::Function::Create(
-        fnTy, llvm::Function::ExternalLinkage, symbol, module.get());
+        fnTy, linkage, symbol, module.get());
 
     unsigned idx = 0;
     for (auto& arg : fn->args()) {

@@ -326,6 +326,38 @@ void testExtern() {
     CHECK(contains(ir, "call"));
 }
 
+void testExport() {
+    bool verified = false;
+    // In a non-`main` module, exported functions keep external linkage so
+    // importers can link against them; non-exported (private-by-default)
+    // functions are lowered to internal linkage and hidden.
+    std::string ir = compileToIR(
+        "module lib\n"
+        "export fun pub_fn(i64 n) -> i64 {\n  return priv_fn(n) + 1\n}\n"
+        "fun priv_fn(i64 n) -> i64 {\n  return n * 2\n}\n",
+        verified);
+    CHECK(verified);
+    // The exported function is an external definition (no `internal` modifier).
+    CHECK(contains(ir, "define i64 @lib_pub_fn"));
+    CHECK(!contains(ir, "define internal i64 @lib_pub_fn"));
+    // The private helper is lowered with internal linkage.
+    CHECK(contains(ir, "define internal i64 @lib_priv_fn"));
+}
+
+void testExportGlobal() {
+    bool verified = false;
+    // Exported globals get external linkage; private globals stay internal.
+    std::string ir = compileToIR(
+        "module lib\n"
+        "export i32 PubG = 7\n"
+        "i32 PrivG = 9\n"
+        "export fun get() -> i32 {\n  return PubG + PrivG\n}\n",
+        verified);
+    CHECK(verified);
+    CHECK(contains(ir, "@PubG = global"));
+    CHECK(contains(ir, "@PrivG = internal global"));
+}
+
 }
 
 int main() {
@@ -353,6 +385,8 @@ int main() {
     testWideString();
     testReinterpretReads();
     testExtern();
+    testExport();
+    testExportGlobal();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " codegen checks passed\n";
     if (g_failures > 0) {
