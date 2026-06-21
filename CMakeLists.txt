@@ -5,7 +5,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb -O0")
+# Release builds are optimized (-O3 -DNDEBUG via the build type). Place each
+# function/data item in its own section and let the linker garbage-collect the
+# unreferenced ones, then strip symbols, to keep the statically-linked-LLVM
+# binary small. (Set -DCMAKE_BUILD_TYPE=Debug for a debuggable build.)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ffunction-sections -fdata-sections")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections -s")
 
 # PGO profile usage (if profile exists)
 if(EXISTS "${CMAKE_SOURCE_DIR}/default.profdata")
