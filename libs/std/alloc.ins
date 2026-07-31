@@ -1,0 +1,130 @@
+// Insty standard library: alloc
+//
+// Owned heap blocks. This wraps the raw allocation builtins in a small record
+// that carries the size and alignment required by free/realloc.
+
+module alloc
+
+export struct Block {
+    u8* ptr
+    u64 size
+    u64 align
+}
+
+export fun alloc_empty() -> Block {
+    Block b
+    unsafe {
+        b.ptr = cast<u8*>(0)
+    }
+    b.size = 0
+    b.align = 16
+    return b
+}
+
+export fun alloc_make(u64 size, u64 align) -> Block {
+    Block b
+    unsafe {
+        b.ptr = @malloc(size, align)
+    }
+    bool failed = false
+    unsafe {
+        failed = cast<u64>(b.ptr) == 0
+    }
+    if failed {
+        b.size = 0
+        b.align = align
+        return b
+    }
+    b.size = size
+    b.align = align
+    return b
+}
+
+export fun alloc_make_default(u64 size) -> Block {
+    return alloc_make(size, 16)
+}
+
+export fun alloc_is_null(Block b) -> bool {
+    unsafe {
+        return cast<u64>(b.ptr) == 0
+    }
+    return true
+}
+
+export fun alloc_free(Block b) -> void {
+    unsafe {
+        @free(b.ptr, b.size, b.align)
+    }
+}
+
+export fun alloc_reset(Block b) -> Block {
+    alloc_free(b)
+    return alloc_empty()
+}
+
+export fun alloc_resize(Block b, u64 new_size) -> Block {
+    Block out
+    unsafe {
+        out.ptr = @realloc(b.ptr, b.size, new_size, b.align)
+    }
+    bool failed = false
+    unsafe {
+        failed = cast<u64>(out.ptr) == 0
+    }
+    if failed {
+        out.size = 0
+        out.align = b.align
+        return out
+    }
+    out.size = new_size
+    out.align = b.align
+    return out
+}
+
+export fun alloc_resize_align(Block b, u64 new_size, u64 new_align) -> Block {
+    Block out
+    unsafe {
+        u8* fresh = @malloc(new_size, new_align)
+        if cast<u64>(fresh) == 0 {
+            out.ptr = cast<u8*>(0)
+            out.size = 0
+            out.align = new_align
+            return out
+        }
+
+        u64 n = b.size
+        if new_size < n {
+            n = new_size
+        }
+        u64 i = 0
+        while i < n {
+            fresh[i] = b.ptr[i]
+            i = i + 1
+        }
+        @free(b.ptr, b.size, b.align)
+
+        out.ptr = fresh
+        out.size = new_size
+        out.align = new_align
+        return out
+    }
+    return out
+}
+
+export fun alloc_byte_at(Block b, u64 index) -> u8 {
+    unsafe {
+        if index >= b.size {
+            return 0
+        }
+        return b.ptr[index]
+    }
+    return 0
+}
+
+export fun alloc_set_byte(Block b, u64 index, u8 value) -> void {
+    unsafe {
+        if index < b.size {
+            b.ptr[index] = value
+        }
+    }
+}

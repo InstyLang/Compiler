@@ -1,0 +1,52 @@
+module main
+
+// Straight-line integer coverage for the WebAssembly backend.
+//
+// Every function here is single-basic-block and call-free, which is the subset
+// the wasm code generator currently accepts. `main` is run as a WASI command
+// (its return value becomes the process exit status); the rest are exported and
+// invoked directly so parameter passing and each arithmetic form are checked
+// against a known result.
+
+// Parameters arrive as wasm i32s and are widened into the i64 locals that stand
+// in for the ABI argument registers; negative inputs check the sign extension.
+fun addup(i32 x, i32 y) -> i32 {
+    return x + y
+}
+
+// The five integer arithmetic forms, including the two that trap on a zero
+// divisor. Signed division truncates toward zero and the remainder takes the
+// dividend's sign, matching both x86 idiv and wasm i64.div_s/rem_s.
+fun mix(i64 a, i64 b) -> i64 {
+    i64 s = a + b
+    i64 d = a - b
+    i64 p = a * b
+    i64 q = a / b
+    i64 r = a % b
+    return s + d + p + q + r
+}
+
+// Bitwise operations and shifts.
+fun bits(i32 v) -> i32 {
+    i32 x = v & 0xF0
+    i32 y = v | 0x03
+    i32 z = v ^ 0xFF
+    i32 w = v << 2
+    i32 u = v >> 1
+    return x + y + z + w + u
+}
+
+// Negation, and the complement spelled as `^ -1` (Insty's `~` is pointer
+// dereference, not bitwise NOT).
+fun unary(i32 v) -> i32 {
+    i32 n = -v
+    i32 c = v ^ -1
+    return n + c
+}
+
+fun main() -> i32 {
+    i32 a = 20
+    i32 b = 22
+    i32 c = a + b
+    return c
+}

@@ -1,0 +1,91 @@
+// Insty standard library: vec
+//
+// A growable, generic dynamic array. Storage is a heap slice (`new T[cap]`);
+// growth allocates a larger block, copies the live elements, and releases the
+// old one via `delete items.ptr` (the `new[]` allocation header lives just
+// before `items.ptr`, so freeing through it is correct).
+//
+// Requires a heap allocator (`--allocator runtime` or `external`). Intended for
+// scalar / pointer / plain-struct element types.
+
+module vec
+
+export class Vector<T> {
+    T[] items      // backing store; items.len is the capacity
+    i64 count      // number of live elements
+
+    constructor() {
+        this.items = new T[4]
+        this.count = 0
+    }
+
+    // Number of elements currently stored.
+    fun len() -> i64 {
+        return this.count
+    }
+
+    // Allocated capacity (>= len).
+    fun capacity() -> i64 {
+        return this.items.len
+    }
+
+    fun is_empty() -> bool {
+        return this.count == 0
+    }
+
+    // Append a value, growing the backing store if needed.
+    fun push(T value) -> void {
+        if this.count >= this.items.len {
+            this.grow()
+        }
+        this.items[this.count] = value
+        this.count = this.count + 1
+    }
+
+    // Element at `index` (unchecked unless compiled with --bounds-check).
+    fun get(i64 index) -> T {
+        return this.items[index]
+    }
+
+    // Overwrite the element at `index`.
+    fun set(i64 index, T value) -> void {
+        this.items[index] = value
+    }
+
+    // Remove and return the last element. Caller must ensure len > 0.
+    fun pop() -> T {
+        this.count = this.count - 1
+        return this.items[this.count]
+    }
+
+    // Drop all elements (keeps the capacity).
+    fun clear() -> void {
+        this.count = 0
+    }
+
+    // A slice view over the live elements [0, len). Borrows the backing store;
+    // it is invalidated by a subsequent push that grows the vector.
+    fun as_slice() -> T[] {
+        return this.items[0..this.count]
+    }
+
+    // Double the capacity (minimum 4) and migrate the live elements.
+    fun grow() -> void {
+        i64 newCap = this.items.len * 2
+        if newCap < 4 {
+            newCap = 4
+        }
+        T[] bigger = new T[newCap]
+        i64 i = 0
+        while i < this.count {
+            bigger[i] = this.items[i]
+            i = i + 1
+        }
+        delete this.items.ptr
+        this.items = bigger
+    }
+
+    destructor() -> void {
+        delete this.items.ptr
+    }
+}

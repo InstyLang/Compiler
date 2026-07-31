@@ -1,0 +1,48 @@
+module main
+
+class Duo<T, U> {
+    T left
+    U right
+    constructor(T l, U r) {
+        this.left = l
+        this.right = r
+    }
+    fun set(T l, U r) -> void {
+        this.left = l
+        this.right = r
+    }
+    fun first() -> T {
+        return this.left
+    }
+    fun second() -> U {
+        return this.right
+    }
+}
+
+class Acc<T> {
+    T value
+    constructor(T v) {
+        this.value = v
+    }
+    operator +(Acc<T> rhs) -> T {
+        return this.value + rhs.value
+    }
+}
+
+fun main() -> i32 {
+    Duo<i8, i64> a = Duo<i8, i64>(1, 2)
+    a.set(33, 70)
+
+    Duo<i64, i8> b = Duo<i64, i8>(5, 9)
+
+    Acc<i32> c = Acc<i32>(10)
+    Acc<i32> d = Acc<i32>(10)
+
+    i64 left = b.first()
+    i8 right = b.second()
+    i32 op = c + d
+
+    i32 total = cast<i32>(a.first()) + cast<i32>(a.second())
+    total = total + cast<i32>(left) + cast<i32>(right) + op
+    return total
+}

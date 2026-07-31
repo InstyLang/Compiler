@@ -66,12 +66,16 @@ AST::NodePtr Parser::parseStatement() {
             return parseIf();
         case TokenType::KwWhile:
             return parseWhile();
+        case TokenType::KwFor:
+            return parseFor();
         case TokenType::KwLoop:
             return parseLoop();
         case TokenType::KwWhen:
             return parseWhen();
         case TokenType::KwSwitch:
             return parseSwitch();
+        case TokenType::KwMatch:
+            return parseMatch();
         case TokenType::KwReturn:
             return parseReturn();
         case TokenType::KwUnsafe:
@@ -104,6 +108,10 @@ AST::NodePtr Parser::parseStatement() {
 AST::NodeList Parser::parseBlock() {
     AST::NodeList body;
 
+    if (!check(TokenType::LBrace)) {
+        return parseSingle();
+    }
+    
     expect(TokenType::LBrace, "E1401", "'{' to begin block");
     match(TokenType::LBrace);
 
@@ -122,6 +130,65 @@ AST::NodeList Parser::parseBlock() {
 
     expect(TokenType::RBrace, "E1402", "'}' to close block");
     match(TokenType::RBrace);
+    return body;
+}
+
+// Body of a compile-time conditional.
+//
+// Unlike an ordinary block this dispatches through parseTopLevel, so a `#if` can
+// select between imports, functions, structs, classes and enums -- not only
+// statements. parseTopLevel falls through to parseStatement for anything it does
+// not recognise, so this stays a superset and works equally well for a `#if`
+// inside a function body.
+AST::NodeList Parser::parseCompileTimeBlock() {
+    AST::NodeList body;
+
+    if (!check(TokenType::LBrace)) {
+        return parseSingle();
+    }
+
+    expect(TokenType::LBrace, "E1401", "'{' to begin block");
+    match(TokenType::LBrace);
+
+    skipNewlines();
+    while (!atEnd() && !check(TokenType::RBrace)) {
+        size_t before = index_;
+        AST::NodePtr stmt = parseTopLevel();
+        if (stmt) {
+            body.push_back(stmt);
+        }
+        if (index_ == before && !atEnd()) {
+            synchronize();
+        }
+        consumeStatementEnd();
+    }
+
+    expect(TokenType::RBrace, "E1402", "'}' to close block");
+    match(TokenType::RBrace);
+    return body;
+}
+
+AST::NodeList Parser::parseSingle() {
+    AST::NodeList body;
+
+    skipNewlines();
+
+    if (!atEnd()) {
+        size_t before = index_;
+        AST::NodePtr stmt = parseStatement();
+        if (stmt) {
+            body.push_back(stmt);
+        }
+        if (index_ == before && !atEnd()) {
+            synchronize();
+        }
+        consumeStatementEnd();
+    }
+
+    if(body.empty()){
+        error("EIDK", "Body of a single expression keyword is empty", "");
+    }
+
     return body;
 }
 

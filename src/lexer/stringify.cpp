@@ -34,6 +34,7 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::KwLoop:          return "KwLoop";
         case TokenType::KwWhen:          return "KwWhen";
         case TokenType::KwSwitch:        return "KwSwitch";
+        case TokenType::KwMatch:         return "KwMatch";
         case TokenType::KwReturn:        return "KwReturn";
         case TokenType::KwBreak:         return "KwBreak";
         case TokenType::KwSkip:          return "KwSkip";
@@ -55,10 +56,12 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::RBracket:        return "RBracket";
         case TokenType::Comma:           return "Comma";
         case TokenType::Dot:             return "Dot";
+        case TokenType::DotDot:          return "DotDot";
         case TokenType::Colon:           return "Colon";
         case TokenType::ColonColon:      return "ColonColon";
         case TokenType::Semicolon:       return "Semicolon";
         case TokenType::Arrow:           return "Arrow";
+        case TokenType::FatArrow:        return "FatArrow";
         case TokenType::Assign:          return "Assign";
         case TokenType::Plus:            return "Plus";
         case TokenType::Minus:           return "Minus";
@@ -83,6 +86,7 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::At:              return "At";
         case TokenType::Hash:            return "Hash";
         case TokenType::Dollar:          return "Dollar";
+        case TokenType::AsmBody:         return "AsmBody";
 
         case TokenType::Newline:         return "Newline";
         case TokenType::EndOfFile:       return "EndOfFile";
@@ -145,6 +149,7 @@ TokenType keywordTokenType(const std::string& word) {
         {"loop",        TokenType::KwLoop},
         {"when",        TokenType::KwWhen},
         {"switch",      TokenType::KwSwitch},
+        {"match",       TokenType::KwMatch},
         {"return",      TokenType::KwReturn},
         {"break",       TokenType::KwBreak},
         {"skip",        TokenType::KwSkip},
@@ -175,3 +180,4 @@ bool isPrimitiveTypeName(const std::string& word) {
     };
     return kPrimitives.find(word) != kPrimitives.end();
 }
+

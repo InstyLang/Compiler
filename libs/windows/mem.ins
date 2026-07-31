@@ -1,0 +1,127 @@
+// Insty standard library: windows::mem
+//
+// Heap and virtual-memory allocation for the x86_64_windows target, built
+// on the kernel32.dll process heap (HeapAlloc / HeapFree) and the
+// VirtualAlloc page allocator.
+//
+// Usage:
+//     import windows::mem
+//
+//     fun main() -> i32 {
+//         void* p = windows.alloc_zeroed(256)
+//         windows.free(p)
+//         return 0
+//     }
+
+module windows
+
+extern fun [dll("kernel32.dll")] GetProcessHeap() -> u64
+extern fun [dll("kernel32.dll")] HeapAlloc(u64 hHeap, u32 dwFlags, u64 dwBytes) -> void*
+extern fun [dll("kernel32.dll")] HeapFree(u64 hHeap, u32 dwFlags, void* lpMem) -> bool
+extern fun [dll("kernel32.dll")] HeapReAlloc(u64 hHeap, u32 dwFlags, void* lpMem, u64 dwBytes) -> void*
+
+extern fun [dll("kernel32.dll")] VirtualAlloc(
+    void* lpAddress,
+    u64 dwSize,
+    u32 flAllocationType,
+    u32 flProtect
+) -> void*
+
+extern fun [dll("kernel32.dll")] VirtualFree(void* lpAddress, u64 dwSize, u32 dwFreeType) -> bool
+extern fun [dll("kernel32.dll")] VirtualProtect(
+    void* lpAddress,
+    u64 dwSize,
+    u32 flNewProtect,
+    u32* lpflOldProtect
+) -> bool
+
+// =========================================================================
+// Process-heap allocation
+// =========================================================================
+
+// Allocate `size` bytes from the process heap. Returns the address, or 0
+// on failure.
+export fun alloc(u64 size) -> void* {
+    unsafe {
+        u64 heap = GetProcessHeap()
+        return HeapAlloc(heap, 0, size)
+    }
+}
+
+// Allocate `size` zero-initialised bytes from the process heap.
+export fun alloc_zeroed(u64 size) -> void* {
+    unsafe {
+        u64 heap = GetProcessHeap()
+        // HEAP_ZERO_MEMORY = 0x00000008.
+        return HeapAlloc(heap, 0x00000008, size)
+    }
+}
+
+// Resize a process-heap allocation. Returns the (possibly moved) address.
+export fun realloc(void* ptr, u64 size) -> void* {
+    unsafe {
+        u64 heap = GetProcessHeap()
+        return HeapReAlloc(heap, 0, ptr, size)
+    }
+}
+
+// Free a process-heap allocation. Returns true on success.
+export fun free(void* ptr) -> bool {
+    unsafe {
+        u64 heap = GetProcessHeap()
+        return HeapFree(heap, 0, ptr)
+    }
+    return false
+}
+
+// =========================================================================
+// Virtual memory (page-granular)
+// =========================================================================
+
+// Reserve and commit `size` bytes of read/write virtual memory. Returns
+// the base address, or 0 on failure.
+export fun virtual_alloc_rw(u64 size) -> void* {
+    unsafe {
+        // MEM_COMMIT | MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04.
+        return VirtualAlloc(cast<void*>(0), size, 0x00003000, 0x04)
+    }
+}
+
+// Reserve and commit `size` bytes of executable read/write virtual memory
+// (useful for JIT / trampolines). Returns the base address, or 0 on failure.
+export fun virtual_alloc_rwx(u64 size) -> void* {
+    unsafe {
+        // MEM_COMMIT | MEM_RESERVE = 0x3000, PAGE_EXECUTE_READWRITE = 0x40.
+        return VirtualAlloc(cast<void*>(0), size, 0x00003000, 0x40)
+    }
+}
+
+// Change the protection of a committed region to read/execute. Returns true
+// on success. Typical after writing code into an rwx page.
+export fun virtual_make_executable(void* ptr, u64 size) -> bool {
+    u32 old = 0
+    unsafe {
+        // PAGE_EXECUTE_READ = 0x20.
+        return VirtualProtect(ptr, size, 0x20, &old)
+    }
+    return false
+}
+
+// Release a virtual allocation obtained from the virtual_alloc_* helpers.
+// The size must be 0 with MEM_RELEASE, per the Win32 contract.
+export fun virtual_free(void* ptr) -> bool {
+    unsafe {
+        // MEM_RELEASE = 0x8000.
+        return VirtualFree(ptr, 0, 0x00008000)
+    }
+    return false
+}
+
+// =========================================================================
+// Constant accessors (page-protection flags)
+// =========================================================================
+
+export fun page_readonly() -> u32 { return 0x02 }
+export fun page_readwrite() -> u32 { return 0x04 }
+export fun page_execute_read() -> u32 { return 0x20 }
+export fun page_execute_readwrite() -> u32 { return 0x40 }

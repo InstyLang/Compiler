@@ -18,6 +18,9 @@ void recordImport(AST::ProgramRoot& root, const AST::NodePtr& node) {
 std::shared_ptr<AST::ProgramRoot> Parser::produceAST(std::string& sourceCode) {
     Lexer lexer;
     std::vector<Token> tokens = lexer.tokenize(sourceCode);
+    // Retain the source: an `asm(...)` block body is raw assembly text, recovered
+    // by byte offset rather than from the token stream.
+    source_ = sourceCode;
     return produceASTFromTokens(std::move(tokens));
 }
 
@@ -185,3 +188,4 @@ void Parser::errorAt(const Token& token, const std::string& code,
             hint);
     }
 }
+

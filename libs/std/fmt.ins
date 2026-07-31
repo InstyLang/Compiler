@@ -1,0 +1,213 @@
+// Insty standard library: fmt
+//
+// Allocation-free formatting into caller-provided byte buffers. Append
+// functions write at most cap bytes and return the new offset. If the returned
+// offset reaches cap, later appends become no-ops.
+
+module fmt
+
+export fun append_byte(u8* buf, i64 cap, i64 off, u8 value) -> i64 {
+    unsafe {
+        if off < 0 {
+            off = 0
+        }
+        if off >= cap {
+            return off
+        }
+        buf[off] = value
+        return off + 1
+    }
+    return off
+}
+
+export fun append_repeat(u8* buf, i64 cap, i64 off, u8 value, i64 count) -> i64 {
+    unsafe {
+        i64 o = off
+        i64 i = 0
+        while i < count {
+            o = append_byte(buf, cap, o, value)
+            i = i + 1
+        }
+        return o
+    }
+    return off
+}
+
+export fun append_text(u8* buf, i64 cap, i64 off, text s) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 o = off
+        i64 i = 0
+        while p[i] != 0 {
+            o = append_byte(buf, cap, o, p[i])
+            i = i + 1
+        }
+        return o
+    }
+    return off
+}
+
+export fun append_bool(u8* buf, i64 cap, i64 off, bool value) -> i64 {
+    if value {
+        return append_text(buf, cap, off, "true")
+    }
+    return append_text(buf, cap, off, "false")
+}
+
+export fun append_u64(u8* buf, i64 cap, i64 off, u64 value) -> i64 {
+    unsafe {
+        u8[32] scratch
+        u8* digits = cast<u8*>(&scratch)
+        u64 v = value
+        i64 di = 0
+        bool more = true
+        while more {
+            u64 q = v / 10
+            u64 r = v - q * 10
+            digits[di] = cast<u8>(48 + r)
+            di = di + 1
+            v = q
+            if v == 0 {
+                more = false
+            }
+        }
+        i64 o = off
+        i64 k = di
+        while k > 0 {
+            k = k - 1
+            o = append_byte(buf, cap, o, digits[k])
+        }
+        return o
+    }
+    return off
+}
+
+export fun append_i64(u8* buf, i64 cap, i64 off, i64 value) -> i64 {
+    u64 mag = cast<u64>(value)
+    i64 o = off
+    if value < 0 {
+        o = append_byte(buf, cap, o, 45)
+        mag = (mag ^ cast<u64>(0 - 1)) + 1
+    }
+    return append_u64(buf, cap, o, mag)
+}
+
+fun hex_digit(u64 value, bool upper) -> u8 {
+    if value < 10 {
+        return cast<u8>(48 + value)
+    }
+    if upper {
+        return cast<u8>(55 + value)
+    }
+    return cast<u8>(87 + value)
+}
+
+export fun append_hex_u64(u8* buf, i64 cap, i64 off, u64 value,
+                          i64 min_digits, bool upper) -> i64 {
+    unsafe {
+        u8[16] scratch
+        u8* digits = cast<u8*>(&scratch)
+        u64 v = value
+        i64 di = 0
+        bool more = true
+        while more {
+            u64 nibble = v & 15
+            digits[di] = hex_digit(nibble, upper)
+            di = di + 1
+            v = v >> 4
+            if v == 0 {
+                more = false
+            }
+        }
+        i64 o = off
+        i64 pad = min_digits - di
+        while pad > 0 {
+            o = append_byte(buf, cap, o, 48)
+            pad = pad - 1
+        }
+        i64 k = di
+        while k > 0 {
+            k = k - 1
+            o = append_byte(buf, cap, o, digits[k])
+        }
+        return o
+    }
+    return off
+}
+
+export fun append_hex_prefix_u64(u8* buf, i64 cap, i64 off, u64 value,
+                                 i64 min_digits, bool upper) -> i64 {
+    i64 o = append_text(buf, cap, off, "0x")
+    return append_hex_u64(buf, cap, o, value, min_digits, upper)
+}
+
+export fun append_ptr(u8* buf, i64 cap, i64 off, u8* ptr) -> i64 {
+    unsafe {
+        return append_hex_prefix_u64(buf, cap, off, cast<u64>(ptr), 16, false)
+    }
+    return off
+}
+
+export fun append_i64_padded(u8* buf, i64 cap, i64 off, i64 value,
+                             i64 min_width, u8 pad) -> i64 {
+    unsafe {
+        u8[32] scratch
+        u8* tmp = cast<u8*>(&scratch)
+        i64 n = append_i64(tmp, 32, 0, value)
+        i64 o = off
+        i64 p = min_width - n
+        while p > 0 {
+            o = append_byte(buf, cap, o, pad)
+            p = p - 1
+        }
+        i64 i = 0
+        while i < n {
+            o = append_byte(buf, cap, o, tmp[i])
+            i = i + 1
+        }
+        return o
+    }
+    return off
+}
+
+export fun append_u64_padded(u8* buf, i64 cap, i64 off, u64 value,
+                             i64 min_width, u8 pad) -> i64 {
+    unsafe {
+        u8[32] scratch
+        u8* tmp = cast<u8*>(&scratch)
+        i64 n = append_u64(tmp, 32, 0, value)
+        i64 o = off
+        i64 p = min_width - n
+        while p > 0 {
+            o = append_byte(buf, cap, o, pad)
+            p = p - 1
+        }
+        i64 i = 0
+        while i < n {
+            o = append_byte(buf, cap, o, tmp[i])
+            i = i + 1
+        }
+        return o
+    }
+    return off
+}
+
+// NUL-terminate the buffer. Returns the visible byte length excluding NUL.
+export fun finish(u8* buf, i64 cap, i64 off) -> i64 {
+    unsafe {
+        if cap <= 0 {
+            return 0
+        }
+        if off < 0 {
+            buf[0] = 0
+            return 0
+        }
+        if off >= cap {
+            buf[cap - 1] = 0
+            return cap - 1
+        }
+        buf[off] = 0
+        return off
+    }
+    return 0
+}

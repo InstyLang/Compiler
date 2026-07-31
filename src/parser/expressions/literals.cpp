@@ -27,6 +27,32 @@ long long parseIntegerValue(const std::string& raw) {
     return static_cast<long long>(std::strtoull(clean.c_str(), nullptr, 10));
 }
 
+// Parses an integer literal into a full 128-bit value, so i128/u128 constants
+// that exceed 64 bits are represented exactly. Accepts an optional 0x/0X hex
+// prefix; digits are accumulated into an unsigned __int128 (overflow past 128
+// bits simply wraps, matching two's-complement literal semantics).
+__int128 parseInteger128(const std::string& raw) {
+    std::string clean = stripUnderscores(raw);
+    unsigned __int128 acc = 0;
+    const char* p = clean.c_str();
+    int base = 10;
+    if (clean.size() > 2 && clean[0] == '0' &&
+        (clean[1] == 'x' || clean[1] == 'X')) {
+        base = 16;
+        p += 2;
+    }
+    for (; *p; ++p) {
+        char c = *p;
+        unsigned d;
+        if (c >= '0' && c <= '9') d = static_cast<unsigned>(c - '0');
+        else if (base == 16 && c >= 'a' && c <= 'f') d = static_cast<unsigned>(c - 'a' + 10);
+        else if (base == 16 && c >= 'A' && c <= 'F') d = static_cast<unsigned>(c - 'A' + 10);
+        else break;
+        acc = acc * static_cast<unsigned __int128>(base) + d;
+    }
+    return static_cast<__int128>(acc);
+}
+
 double parseFloatValue(const std::string& raw) {
     std::string clean = stripUnderscores(raw);
     return std::strtod(clean.c_str(), nullptr);
@@ -35,7 +61,7 @@ double parseFloatValue(const std::string& raw) {
 std::shared_ptr<AST::IntegerLiteral> makeInteger(const std::string& raw) {
     auto node = std::make_shared<AST::IntegerLiteral>();
     node->raw = raw;
-    node->value = parseIntegerValue(raw);
+    node->value = parseInteger128(raw);
     return node;
 }
 

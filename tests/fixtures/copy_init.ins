@@ -1,0 +1,55 @@
+module main
+
+// Whole-struct/class copy-initialization (`T x = <init>`):
+//   - copy from another aggregate lvalue produces an independent copy,
+//   - copy from a call result and from a struct literal,
+//   - copy-init of a class from a constructor call is construct-in-place
+//     (copy-elision), so a class with a destructor is destroyed exactly once.
+
+i32 dtors = 0
+
+struct Point { i32 x  i32 y }
+
+class Res {
+    i32 tag
+
+    constructor(i32 t) {
+        this.tag = t
+    }
+
+    destructor() -> void {
+        dtors = dtors + 1
+    }
+}
+
+fun makePoint(i32 a, i32 b) -> Point {
+    Point p
+    p.x = a
+    p.y = b
+    return p
+}
+
+fun runRaii() -> void {
+    Res a = Res(5)   // construct-in-place (no temporary, one object)
+    Res b = a        // copy from an lvalue: a distinct object
+    return
+    // a and b are each destroyed exactly once -> dtors += 2 (not 4)
+}
+
+fun main() -> i32 {
+    // Copy from a struct lvalue: t is independent of later writes to s.
+    Point s
+    s.x = 10
+    s.y = 20
+    Point t = s
+    s.x = 999
+
+    // Copy from a call result and from a struct literal.
+    Point u = makePoint(3, 4)
+    Point v = Point{ x: 1, y: 1 }
+
+    runRaii()
+
+    // (10 + 20) + (3 + 4) + (1 + 1) + dtors(2) = 41
+    return t.x + t.y + u.x + u.y + v.x + v.y + dtors
+}

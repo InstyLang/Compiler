@@ -1,0 +1,58 @@
+// Insty standard library: instantos::mem
+//
+// Virtual-memory syscalls for the x86_64_instantos target: anonymous
+// mmap/munmap and mprotect, issued via std::syscall (numbers 12, 13
+// and 90) using the InstantOS register convention.
+//
+// Protection flags match enum MemoryProtection in the kernel:
+//   read = 1, write = 2, execute = 4 (OR them together).
+//
+// Usage:
+//     import instantos::mem
+//
+//     fun main() -> i32 {
+//         i64 p = instantos.map(0, 4096, instantos.prot_read() | instantos.prot_write())
+//         instantos.unmap(p, 4096)
+//         return 0
+//     }
+
+module instantos
+
+// Kernel entry: the register convention lives in std::syscall, not here.
+import std::syscall
+
+// Memory-protection flags (MemoryProtection in the kernel).
+export fun prot_read() -> i64 { return 1 }
+export fun prot_write() -> i64 { return 2 }
+export fun prot_exec() -> i64 { return 4 }
+
+// map(addr, length, prot): map anonymous memory. `addr` is a hint (0 lets
+// the kernel choose). Returns the mapping address, or a negative errno.
+export fun map(i64 addr, i64 length, i64 prot) -> i64 {
+    unsafe {
+        return syscall.sys3(12, addr, length, prot)
+    }
+    return 0
+}
+
+// Convenience: map `length` bytes of read/write anonymous memory.
+export fun map_rw(i64 length) -> i64 {
+    return map(0, length, 3)
+}
+
+// unmap(addr, length): release a previously-mapped region.
+export fun unmap(i64 addr, i64 length) -> i64 {
+    unsafe {
+        return syscall.sys2(13, addr, length)
+    }
+    return 0
+}
+
+// protect(addr, length, prot): change the protection of a mapped region.
+export fun protect(i64 addr, i64 length, i64 prot) -> i64 {
+    unsafe {
+        return syscall.sys3(90, addr, length, prot)
+    }
+    return 0
+}
+

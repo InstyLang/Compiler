@@ -1,0 +1,78 @@
+module main
+
+// Indirect calls through function pointers.
+//
+// wasm cannot call an address: code does not live in linear memory. A callee is
+// reached either by index (a direct `call`) or through a function table with
+// `call_indirect`, which checks the callee's type at run time.
+//
+// The backend therefore gives every address-taken function a table slot holding a
+// small thunk with a uniform all-i64 signature, converting to and from the real
+// one. `&fn` yields that slot rather than an address. This fixture exercises the
+// conversions the thunk exists for: narrower parameters, an exact 64-bit
+// signature, a negative result, and dispatch chosen at run time.
+//
+// Returns 42.
+
+fun add_i32(i32 a, i32 b) -> i32 {
+    return a + b
+}
+
+fun mul_i64(i64 a, i64 b) -> i64 {
+    return a * b
+}
+
+fun negate(i64 v) -> i64 {
+    return 0 - v
+}
+
+fun double_it(i64 n) -> i64 {
+    return n * 2
+}
+
+// Calling through a pointer that arrived as a parameter, so the target is not
+// visible at the call site.
+fun apply(u64 fp, i64 v) -> i64 {
+    unsafe {
+        return fnCall<i64>(fp, v)
+    }
+    return 0
+}
+
+fun main() -> i32 {
+    unsafe {
+        // Narrower parameters: the thunk wraps each i64 down to i32 and widens
+        // the i32 result back.
+        u64 f_add = cast<u64>(&add_i32)
+        i64 sum = fnCall<i64>(f_add, 20, 22)            // 42
+
+        // An exact 64-bit signature: no conversion at all.
+        u64 f_mul = cast<u64>(&mul_i64)
+        i64 prod = fnCall<i64>(f_mul, 6, 7)             // 42
+
+        // A negative 64-bit result travels intact.
+        u64 f_neg = cast<u64>(&negate)
+        i64 neg = fnCall<i64>(f_neg, 42)                // -42
+
+        // Through a function pointer passed as an argument.
+        u64 f_dbl = cast<u64>(&double_it)
+        i64 dbl = apply(f_dbl, 21)                      // 42
+
+        // Dispatch selected at run time, so the target cannot be resolved
+        // statically.
+        i64 total = 0
+        i64 i = 0
+        while i < 2 {
+            u64 chosen = f_mul
+            if i == 1 {
+                chosen = f_add
+            }
+            total = total + fnCall<i64>(chosen, 3, 4)   // 12 then 7 => 19
+            i = i + 1
+        }
+
+        // 42 + 42 + (-42) + 42 + 19 = 103 ; 103 - 61 = 42
+        return cast<i32>(sum + prod + neg + dbl + total - 61)
+    }
+    return 0
+}

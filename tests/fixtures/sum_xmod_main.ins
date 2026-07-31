@@ -1,0 +1,35 @@
+module main
+
+// Cross-module sum types: the `Expr` tagged union is defined in sum_xmod_dep and
+// is both constructed (`Expr.Neg(...)`) and matched here in main. Returns 42.
+
+import sum_xmod_dep
+
+fun count_nodes(Expr* e) -> i64 {
+    Expr node
+    unsafe { node = ~e }
+    match node {
+        Lit(v) => return 1
+        Add(l, r) => return count_nodes(l) + count_nodes(r) + 1
+        Neg(x) => return count_nodes(x) + 1
+    }
+    return 0
+}
+
+fun main() -> i32 {
+    // (10 + 20) + 12 == 42, built with the dependency's constructors.
+    Expr* t = sum_xmod_dep.mk_add(
+        sum_xmod_dep.mk_add(sum_xmod_dep.mk_lit(10), sum_xmod_dep.mk_lit(20)),
+        sum_xmod_dep.mk_lit(12))
+    i64 sum = sum_xmod_dep.eval(t)      // 42
+
+    i64 n = count_nodes(t)             // 5 nodes: 3 Lit + 2 Add
+
+    // Construct the imported variant directly in main, then evaluate it there.
+    Expr* five = sum_xmod_dep.mk_lit(5)
+    Expr* neg = new Expr
+    unsafe { ~neg = Expr.Neg(five) }
+    i64 e2 = sum_xmod_dep.eval(neg)     // -5
+
+    return cast<i32>(sum + n + e2)     // 42 + 5 - 5 = 42
+}

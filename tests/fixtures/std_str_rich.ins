@@ -1,0 +1,36 @@
+module main
+
+// Richer string helpers: str.hash / str.to_i64 and the String query/substring
+// methods. Returns 42.
+
+import std::string
+import std::str
+
+fun main() -> i32 {
+    i32 total = 0
+
+    // str.to_i64 (with sign) and str.hash determinism.
+    total = total + cast<i32>(str.to_i64("40"))          // 40
+    total = total + cast<i32>(str.to_i64("-38"))         // 2
+    if str.hash("abc") == str.hash("abc") {
+        total = total + 10                                // 12
+    }
+    if str.hash("abc") != str.hash("abd") {
+        total = total + 10                                // 22
+    }
+
+    // String query + substring methods.
+    String s = String()
+    s.append("compiler")
+    if s.starts_with("comp") { total = total + 4 }        // 26
+    if s.contains("pil") { total = total + 4 }            // 30
+    if s.ends_with("er") { total = total + 4 }            // 34
+
+    String sub = s.substring(0, 4)                        // "comp"
+    if sub.equals("comp") { total = total + 4 }           // 38
+
+    // String.hash matches str.hash on equal content.
+    if s.hash() == str.hash("compiler") { total = total + 4 }  // 42
+
+    return total
+}

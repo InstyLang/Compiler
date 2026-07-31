@@ -7,27 +7,17 @@
 namespace Builtins {
 
 enum class Builtin {
-    Syscall,
-    Strlen,
-    Sizeof,
-    Alignof,
     Malloc,
     Free,
     Realloc,
     Memset,
     Memcpy,
     Panic,
-    Print,
-    Println,
-    ReadFile,
-    System,
-    GetCurrentOS,
-    Typeof,
-    Offsetof,
-    Bitcast,
-    IntToPtr,
-    PtrToInt,
+    // Compile-time target predicate. Only meaningful inside a #if condition,
+    // where the comptime pass folds it away; see compiler/comptime.hpp.
+    TargetIs,
     Utf16,
+    Hash,
     Unknown
 };
 
@@ -45,3 +35,4 @@ const BuiltinSpec& spec(Builtin id);
 bool isBuiltinName(const std::string& name);
 
 }
+

@@ -1,0 +1,56 @@
+module main
+
+// By-value aggregate arguments are true copies: the callee gets its own object
+// and cannot mutate the caller's. This holds for the memory ABI (large structs
+// and classes with a destructor, passed by hidden pointer) as well as the
+// register ABI (small structs). A class argument is a distinct object destroyed
+// once at the end of the call statement; a prvalue temporary passed as an
+// argument (e.g. C(...)) is constructed once and not copied again.
+
+i32 dtors = 0
+
+struct Big { i64 a  i64 b  i64 c }   // 24 bytes -> memory ABI
+
+class Res {
+    i32 v
+
+    constructor(i32 x) {
+        this.v = x
+    }
+
+    destructor() -> void {
+        dtors = dtors + 1
+    }
+}
+
+fun mutateBig(Big v) -> i64 {
+    v.a = 999                 // mutates the copy only
+    return v.a + v.b + v.c    // 999 + 20 + 30
+}
+
+fun takeRes(Res r) -> i32 {
+    r.v = 777                 // mutates the copy only
+    return r.v
+}
+
+fun run() -> i32 {
+    Big g
+    g.a = 10
+    g.b = 20
+    g.c = 30
+    i64 mb = mutateBig(g)     // g must stay {10,20,30}
+
+    Res x = Res(5)
+    i32 tr = takeRes(x)       // x.v must stay 5; arg copy destroyed here (+1)
+    i32 tt = takeRes(Res(8))  // prvalue temp: constructed once, destroyed once (+1)
+
+    // g unchanged -> 10+20+30 = 60 ; x.v unchanged -> 5
+    // mb = 1049, tr = 777, tt = 777 (returned from the mutated copies)
+    return cast<i32>(g.a + g.b + g.c) + x.v   // 60 + 5 = 65
+}
+
+fun main() -> i32 {
+    i32 base = run()
+    // dtors: takeRes(x) copy(1) + x(1) + Res(8) temp(1) = 3
+    return base + dtors       // 65 + 3 = 68
+}

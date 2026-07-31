@@ -1,0 +1,37 @@
+// Regression: short-circuit `&&`/`||` used as the condition of an `else if`.
+//
+// A logical operator lowers to a value via a short-circuit (lhs; branch; rhs;
+// done) block sequence. selLogical must jump explicitly into its rhs block
+// instead of relying on physical fall-through: inside an `else if`, the
+// enclosing `if` has already appended its then/else/join blocks, so the rhs
+// block is not adjacent in layout. The old bug fell through into the outer join
+// block, skipping rhs evaluation entirely (wrong result / infinite loops).
+
+module main
+
+fun classify(i64 c) -> i64 {
+    if c == 32 {
+        return 1
+    } else if c == 43 || c == 45 {     // '+' or '-'
+        return 2
+    } else if c >= 48 && c <= 57 {     // ASCII digit
+        return 3
+    } else {
+        return 4
+    }
+    return 0
+}
+
+fun main() -> i32 {
+    i64 ok = 0
+    if classify(32) == 1 { ok = ok + 1 }   // leading if
+    if classify(43) == 2 { ok = ok + 1 }   // || left operand true
+    if classify(45) == 2 { ok = ok + 1 }   // || right operand true
+    if classify(9)  == 4 { ok = ok + 1 }   // || both false -> && false -> else
+    if classify(50) == 3 { ok = ok + 1 }   // && both operands true
+    if classify(70) == 4 { ok = ok + 1 }   // && left true, right false -> else
+    if ok == 6 {
+        return 42
+    }
+    return 0
+}

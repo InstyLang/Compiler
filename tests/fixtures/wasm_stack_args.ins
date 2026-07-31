@@ -1,0 +1,27 @@
+module main
+
+// Outgoing stack arguments for the WebAssembly backend.
+//
+// System V has six integer and eight SSE argument registers; anything past them
+// the selector spills to the caller's outgoing area with StoreOutgoing, and the
+// callee reads back from an incoming frame slot. wasm passes everything as
+// parameters, so the emitter has to reproduce that layout on both sides: the
+// outgoing area lives at the bottom of the shadow-stack frame, and each incoming
+// slot becomes a local seeded from the matching wasm parameter.
+
+// Nine integers: three past the integer register file. The coefficients make any
+// mis-ordering of the spilled arguments show up in the result.
+fun nine(i32 a, i32 b, i32 c, i32 d, i32 e, i32 f, i32 g, i32 h, i32 i) -> i32 {
+    return a + b*2 + c*3 + d*4 + e*5 + f*6 + g*7 + h*8 + i*9
+}
+
+// Interleaved integers and doubles, overflowing both register files at once. On
+// System V the two cursors advance independently, so the spill order here is not
+// simply "the last few arguments".
+fun manymixed(i32 a, f64 b, i32 c, f64 d, i32 e, f64 f, i32 g, f64 h, i32 i, f64 j) -> i32 {
+    return a + c + e + g + i + cast<i32>(b + d + f + h + j)
+}
+
+fun main() -> i32 {
+    return nine(1, 1, 1, 1, 1, 1, 1, 1, 1) - 3
+}

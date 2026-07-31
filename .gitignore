@@ -1,5 +1,7 @@
 build/
+build-*/
 *.o
+*.obj
 *.a
 *.ll
 *.bc

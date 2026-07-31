@@ -1,0 +1,194 @@
+// Insty standard library: windows::files
+//
+// File operations for the x86_64_windows target, built on the kernel32.dll
+// CreateFileA / ReadFile / WriteFile family. Handles are u64; failures
+// return windows.invalid_handle_value() (see windows::core) or 0.
+//
+// Usage:
+//     import windows::files
+//
+//     fun main() -> i32 {
+//         u64 f = windows.create_write("out.txt")
+//         if windows.handle_valid(f) {
+//             windows.file_write_str(f, "hello\n")
+//             windows.file_close(f)
+//         }
+//         return 0
+//     }
+
+module windows
+
+import std::str
+
+extern fun [dll("kernel32.dll")] CreateFileA(
+    text lpFileName,
+    u32 dwDesiredAccess,
+    u32 dwShareMode,
+    void* lpSecurityAttributes,
+    u32 dwCreationDisposition,
+    u32 dwFlagsAndAttributes,
+    u64 hTemplateFile
+) -> u64
+
+extern fun [dll("kernel32.dll")] WriteFile(
+    u64 hFile,
+    void* lpBuffer,
+    u32 nNumberOfBytesToWrite,
+    u32* lpNumberOfBytesWritten,
+    void* lpOverlapped
+) -> bool
+
+extern fun [dll("kernel32.dll")] ReadFile(
+    u64 hFile,
+    void* lpBuffer,
+    u32 nNumberOfBytesToRead,
+    u32* lpNumberOfBytesRead,
+    void* lpOverlapped
+) -> bool
+
+extern fun [dll("kernel32.dll")] SetFilePointer(
+    u64 hFile,
+    i32 lDistanceToMove,
+    i32* lpDistanceToMoveHigh,
+    u32 dwMoveMethod
+) -> u32
+
+extern fun [dll("kernel32.dll")] GetFileSize(u64 hFile, u32* lpFileSizeHigh) -> u32
+extern fun [dll("kernel32.dll")] FlushFileBuffers(u64 hFile) -> bool
+extern fun [dll("kernel32.dll")] DeleteFileA(text lpFileName) -> bool
+extern fun [dll("kernel32.dll")] CloseHandle(u64 hObject) -> bool
+
+// =========================================================================
+// Open / create
+// =========================================================================
+
+// Open an existing file for reading. Returns the file handle, or the
+// invalid-handle sentinel (0xFFFFFFFFFFFFFFFF) on failure.
+export fun open_read(text path) -> u64 {
+    unsafe {
+        // GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL.
+        return CreateFileA(path, 0x80000000, 0x00000001, cast<void*>(0),
+                           3, 0x00000080, 0)
+    }
+    return 0xFFFFFFFFFFFFFFFF
+}
+
+// Create or truncate a file for writing. Returns the file handle, or the
+// invalid-handle sentinel on failure.
+export fun create_write(text path) -> u64 {
+    unsafe {
+        // GENERIC_WRITE, no sharing, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL.
+        return CreateFileA(path, 0x40000000, 0, cast<void*>(0),
+                           2, 0x00000080, 0)
+    }
+    return 0xFFFFFFFFFFFFFFFF
+}
+
+// Open for writing, creating if absent, without truncating (append-style
+// access; combine with seek_end to append).
+export fun open_append(text path) -> u64 {
+    unsafe {
+        // GENERIC_WRITE, FILE_SHARE_READ, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL.
+        return CreateFileA(path, 0x40000000, 0x00000001, cast<void*>(0),
+                           4, 0x00000080, 0)
+    }
+    return 0xFFFFFFFFFFFFFFFF
+}
+
+// True when a handle returned by the open/create helpers is usable.
+export fun handle_valid(u64 handle) -> bool {
+    return handle != 0xFFFFFFFFFFFFFFFF
+}
+
+// Close an open file handle. Returns true on success.
+export fun file_close(u64 handle) -> bool {
+    unsafe {
+        return CloseHandle(handle)
+    }
+    return false
+}
+
+// =========================================================================
+// Read / write
+// =========================================================================
+
+// Read up to `len` bytes from an open file into `buffer`. Returns the
+// number of bytes read.
+export fun file_read(u64 handle, void* buffer, u32 len) -> u32 {
+    u32 got = 0
+    unsafe {
+        ReadFile(handle, buffer, len, &got, cast<void*>(0))
+    }
+    return got
+}
+
+// Write `len` bytes from `buffer` to an open file. Returns the number of
+// bytes written.
+export fun file_write(u64 handle, void* buffer, u32 len) -> u32 {
+    u32 written = 0
+    unsafe {
+        WriteFile(handle, buffer, len, &written, cast<void*>(0))
+    }
+    return written
+}
+
+// Write a NUL-terminated string to an open file handle. Returns bytes written.
+export fun file_write_str(u64 handle, text s) -> u32 {
+    unsafe {
+        return file_write(handle, cast<void*>(s), cast<u32>(str.len(s)))
+    }
+    return 0
+}
+
+// Flush buffered writes for a file to disk. Returns true on success.
+export fun file_flush(u64 handle) -> bool {
+    unsafe {
+        return FlushFileBuffers(handle)
+    }
+    return false
+}
+
+// =========================================================================
+// Position / size
+// =========================================================================
+
+// Move the file pointer to an absolute offset from the start of the file.
+// Returns the new low-32-bit position.
+export fun seek_begin(u64 handle, i32 offset) -> u32 {
+    unsafe {
+        // FILE_BEGIN = 0.
+        return SetFilePointer(handle, offset, cast<i32*>(0), 0)
+    }
+    return 0
+}
+
+// Move the file pointer to the end of the file (offset 0, FILE_END).
+export fun seek_end(u64 handle) -> u32 {
+    unsafe {
+        // FILE_END = 2.
+        return SetFilePointer(handle, 0, cast<i32*>(0), 2)
+    }
+    return 0
+}
+
+// Size in bytes of an open file (low 32 bits; sufficient for files < 4 GiB).
+export fun file_size(u64 handle) -> u64 {
+    unsafe {
+        u32 low = GetFileSize(handle, cast<u32*>(0))
+        return cast<u64>(low)
+    }
+    return 0
+}
+
+// =========================================================================
+// Filesystem
+// =========================================================================
+
+// Delete a file by path. Returns true on success.
+export fun delete_file(text path) -> bool {
+    unsafe {
+        return DeleteFileA(path)
+    }
+    return false
+}
+

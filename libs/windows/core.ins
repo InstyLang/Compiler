@@ -1,0 +1,211 @@
+// Insty standard library: windows::core
+//
+// Process, handle, error, timing and dynamic-loading primitives of the
+// Win32 API (kernel32.dll) for the x86_64_windows target. Functions are
+// imported straight from the system DLLs via `extern fun [dll("...")]`,
+// so no import library or libc is needed: the PE writer turns each
+// referenced extern into an entry in the executable's import table.
+//
+// Usage:
+//     import windows::core
+//
+//     fun main() -> i32 {
+//         windows.sleep_ms(10)
+//         return cast<i32>(windows.last_error())
+//     }
+//
+// Conventions across the windows::* modules:
+//   - HANDLEs, HWNDs and other opaque pointers are modelled as u64.
+//   - Win32 BOOL is a 32-bit int; exposed as `bool` where only tested
+//     for zero / non-zero.
+//   - String parameters are NUL-terminated `text` (ANSI / "A" APIs).
+//   - Insty module-level globals are not visible across `import`, so
+//     named constants are exposed as zero-argument accessor functions
+//     (e.g. windows.std_output_handle()). The split windows::* files
+//     each redeclare only the externs they use; duplicate extern
+//     declarations merge into a single PE import.
+
+module windows
+
+// =========================================================================
+// kernel32.dll: process / handles / errors
+// =========================================================================
+
+extern fun [dll("kernel32.dll")] ExitProcess(u32 uExitCode) -> void
+extern fun [dll("kernel32.dll")] GetLastError() -> u32
+extern fun [dll("kernel32.dll")] SetLastError(u32 dwErrCode) -> void
+extern fun [dll("kernel32.dll")] GetCurrentProcessId() -> u32
+extern fun [dll("kernel32.dll")] GetCurrentProcess() -> u64
+extern fun [dll("kernel32.dll")] GetCurrentThreadId() -> u32
+extern fun [dll("kernel32.dll")] CloseHandle(u64 hObject) -> bool
+extern fun [dll("kernel32.dll")] Sleep(u32 dwMilliseconds) -> void
+
+// =========================================================================
+// kernel32.dll: timing
+// =========================================================================
+
+extern fun [dll("kernel32.dll")] GetTickCount64() -> u64
+extern fun [dll("kernel32.dll")] QueryPerformanceCounter(i64* lpPerformanceCount) -> bool
+extern fun [dll("kernel32.dll")] QueryPerformanceFrequency(i64* lpFrequency) -> bool
+
+// =========================================================================
+// kernel32.dll: dynamic loading
+// =========================================================================
+
+extern fun [dll("kernel32.dll")] LoadLibraryA(text lpLibFileName) -> u64
+extern fun [dll("kernel32.dll")] GetProcAddress(u64 hModule, text lpProcName) -> u64
+extern fun [dll("kernel32.dll")] FreeLibrary(u64 hLibModule) -> bool
+extern fun [dll("kernel32.dll")] GetModuleHandleA(text lpModuleName) -> u64
+
+// =========================================================================
+// Wrappers: process control
+// =========================================================================
+
+// Terminate the current process with the given exit code. Never returns.
+export fun exit(u32 code) -> void {
+    unsafe {
+        ExitProcess(code)
+    }
+}
+
+// Process id of the calling process.
+export fun process_id() -> u32 {
+    unsafe {
+        return GetCurrentProcessId()
+    }
+    return 0
+}
+
+// Thread id of the calling thread.
+export fun thread_id() -> u32 {
+    unsafe {
+        return GetCurrentThreadId()
+    }
+    return 0
+}
+
+// Pseudo-handle for the current process (does not need to be closed).
+export fun current_process() -> u64 {
+    unsafe {
+        return GetCurrentProcess()
+    }
+    return 0
+}
+
+// Close a handle (file, process, thread, ...). Returns true on success.
+export fun close(u64 handle) -> bool {
+    unsafe {
+        return CloseHandle(handle)
+    }
+    return false
+}
+
+// =========================================================================
+// Wrappers: errors
+// =========================================================================
+
+// The last-error code set by the most recent failing Win32 call.
+export fun last_error() -> u32 {
+    unsafe {
+        return GetLastError()
+    }
+    return 0
+}
+
+// Overwrite the calling thread's last-error code.
+export fun set_last_error(u32 code) -> void {
+    unsafe {
+        SetLastError(code)
+    }
+}
+
+// =========================================================================
+// Wrappers: timing
+// =========================================================================
+
+// Suspend the current thread for the given number of milliseconds.
+export fun sleep_ms(u32 ms) -> void {
+    unsafe {
+        Sleep(ms)
+    }
+}
+
+// Milliseconds elapsed since the system was started.
+export fun tick_count() -> u64 {
+    unsafe {
+        return GetTickCount64()
+    }
+    return 0
+}
+
+// High-resolution performance counter value (raw ticks). Pair with
+// perf_frequency() to convert to seconds.
+export fun perf_counter() -> i64 {
+    i64 value = 0
+    unsafe {
+        QueryPerformanceCounter(&value)
+    }
+    return value
+}
+
+// Performance-counter ticks per second.
+export fun perf_frequency() -> i64 {
+    i64 value = 0
+    unsafe {
+        QueryPerformanceFrequency(&value)
+    }
+    return value
+}
+
+// =========================================================================
+// Wrappers: dynamic loading
+// =========================================================================
+
+// Load a DLL by name. Returns the module handle, or 0 on failure.
+export fun load_library(text name) -> u64 {
+    unsafe {
+        return LoadLibraryA(name)
+    }
+    return 0
+}
+
+// Resolve an exported symbol address in a loaded module. Returns 0 if the
+// symbol is not found. Call through the result with fnCall<...>(addr, ...).
+export fun proc_address(u64 hModule, text symbol) -> u64 {
+    unsafe {
+        return GetProcAddress(hModule, symbol)
+    }
+    return 0
+}
+
+// Unload a DLL previously loaded with load_library. Returns true on success.
+export fun free_library(u64 hModule) -> bool {
+    unsafe {
+        return FreeLibrary(hModule)
+    }
+    return false
+}
+
+// Handle of an already-loaded module (NULL name returns the .exe itself).
+export fun module_handle(text name) -> u64 {
+    unsafe {
+        return GetModuleHandleA(name)
+    }
+    return 0
+}
+
+// =========================================================================
+// Constant accessors
+//
+// Insty module-level globals are not visible across `import`, so named
+// Win32 constants are exposed as zero-argument accessors returning their
+// literal value. Combine flag values with `|`.
+// =========================================================================
+
+export fun std_input_handle() -> i32 { return 0 - 10 }
+export fun std_output_handle() -> i32 { return 0 - 11 }
+export fun std_error_handle() -> i32 { return 0 - 12 }
+export fun invalid_handle_value() -> u64 { return 0xFFFFFFFFFFFFFFFF }
+
+// Common timeout sentinel for the wait functions.
+export fun infinite() -> u32 { return 0xFFFFFFFF }

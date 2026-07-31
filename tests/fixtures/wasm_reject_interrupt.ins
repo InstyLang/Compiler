@@ -1,0 +1,12 @@
+module main
+
+// wasm has no interrupts and no named code sections. Both directives used to be
+// accepted and quietly dropped, which is worse than refusing them.
+
+fun [interrupt(on), mangle(off)] irq() -> void {
+    return
+}
+
+fun main() -> i32 {
+    return 0
+}

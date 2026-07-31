@@ -1,0 +1,145 @@
+module main
+
+// Raw inline-assembly blocks: `asm [keep(reg)]( ... NASM text ... )`.
+//
+// The body is real assembly, assembled by the backend rather than matched
+// against a fixed list of templates. `$name` refers to an Insty local and
+// becomes that local's stack slot, so a block can read and write ordinary
+// variables. The surrounding function keeps its normal prologue and epilogue --
+// a block is instructions spliced into the body, not a replacement for it.
+//
+// `keep(reg)` reserves a register for the block. Registers the block touches
+// that were not declared are still treated as clobbered, so under-declaring
+// costs a little performance and never correctness.
+//
+// The lexer hands the body over verbatim as a single token, so a comment may
+// contain apostrophes, quotes and unbalanced parentheses; the block below relies
+// on that, and would fail to lex if the raw mode regressed.
+//
+// Returns 99 only if every block below computed what the assembly says.
+
+fun compute() -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax), keep(rdx)](
+            ; don't clobber rdx -- it's "reserved" (, ) and ( in a comment too
+            mov rax, 40
+            mov rdx, 2
+            add rax, rdx        ; 42
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+fun arithmetic(i64 seed) -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax), keep(rcx), keep(rdx)](
+            mov rax, $seed      ; read a parameter slot
+            imul rax, rax       ; seed*seed
+            mov rcx, 8
+            shl rax, 1
+            sub rax, rcx
+            xor rdx, rdx
+            inc rdx
+            add rax, rdx
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+// Memory operands, including a scaled index, and a narrower access width.
+fun addressing() -> i64 {
+    i64 out = 0
+    i64 base = 5
+    unsafe {
+        asm [keep(rax), keep(rdx)](
+            mov rax, $base
+            lea rdx, [rax + rax*2]   ; 15
+            mov rax, rdx
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+// 32-bit operand size, and a byte store through a $var slot.
+fun widths() -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax)](
+            mov eax, 0x10           ; 32-bit form zero-extends to rax
+            add eax, 0x0f           ; 31
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+// Labels and branches inside a block: a backward branch forms a loop, a forward
+// branch jumps over code. Both are back-patched once the label offsets are known.
+fun loopSum(i64 n) -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax), keep(rcx)](
+            mov rcx, $n
+            xor rax, rax
+        top:
+            test rcx, rcx
+            je done
+            add rax, rcx
+            dec rcx
+            jmp top
+        done:
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+fun forwardBranch() -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax)](
+            mov rax, 1
+            cmp rax, 1
+            je skip
+            mov rax, 999      ; jumped over
+        skip:
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+fun main() -> i32 {
+    i32 e = 0
+    if loopSum(10) != 55 { e = e + 1 }
+    if forwardBranch() != 1 { e = e + 1 }
+    if compute() != 42 { e = e + 1 }
+    if arithmetic(7) != 91 { e = e + 1 }   // 49*2 - 8 + 1
+    if addressing() != 15 { e = e + 1 }
+    if widths() != 31 { e = e + 1 }
+
+    // A block runs inside an intact frame: locals around it survive.
+    i64 before = 123
+    i64 after = 0
+    unsafe {
+        asm [keep(rax)](
+            mov rax, 7
+            mov $after, rax
+        )
+    }
+    if before != 123 { e = e + 1 }
+    if after != 7 { e = e + 1 }
+
+    if e != 0 {
+        return 1
+    }
+    return 99
+}
+
+
+

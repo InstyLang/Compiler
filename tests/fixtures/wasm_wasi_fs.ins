@@ -1,0 +1,44 @@
+module main
+
+// WASI file access for the wasm32_wasi target.
+//
+// Exercises the whole path: path_open (nine arguments, three of them past the
+// System V argument registers, so this depends on the backend's stack-argument
+// support), then fd_write, fd_read and path_unlink_file.
+//
+// WASI is capability based, so the host must grant a directory -- the test runner
+// passes `--dir .` -- and every path resolves relative to that preopen.
+import wasi::fs
+import wasi::io
+
+fun main() -> i32 {
+    // Write a file.
+    i32 out = wasi.create_write("scratch.txt")
+    if out < 0 {
+        wasi.println("create failed")
+        return 1
+    }
+    wasi.write_text(out, "hello from wasi fs\n")
+    wasi.write_text(out, "second line\n")
+    wasi.close(out)
+
+    // Read it back.
+    i32 inp = wasi.open_read("scratch.txt")
+    if inp < 0 {
+        wasi.println("open failed")
+        return 2
+    }
+    u8[256] buf
+    i64 n = 0
+    unsafe {
+        n = wasi.read(inp, cast<u8*>(&buf), 255)
+        buf[n] = 0
+        wasi.close(inp)
+        wasi.print(cast<text>(cast<u8*>(&buf)))
+    }
+    wasi.print("bytes read: ")
+    wasi.println_int(n)
+
+    wasi.remove("scratch.txt")
+    return 0
+}

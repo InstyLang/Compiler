@@ -13,7 +13,6 @@ enum class OutputMode {
     Check,
     EmitTokens,
     EmitAst,
-    EmitLlvm,
     Object,
     Executable
 };
@@ -34,6 +33,7 @@ struct CompilerConfig {
     bool multiboot2 = false;
     bool rawBinary = false;
     bool verbose = false;
+    bool boundsCheck = false;
     int optLevel = 0;
 
     Runtime::AllocatorMode allocatorMode = Runtime::AllocatorMode::None;

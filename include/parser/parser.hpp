@@ -38,6 +38,7 @@ public:
     AST::NodePtr parseTopLevel();
     AST::NodePtr parseStatement();
     AST::NodeList parseBlock();
+    AST::NodeList parseSingle();
     AST::NodePtr parseFunctionDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseExternDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseExportDeclaration();
@@ -47,12 +48,17 @@ public:
     AST::NodePtr parseImport();
     AST::NodePtr parseIf();
     AST::NodePtr parseWhile();
+    AST::NodePtr parseFor();
     AST::NodePtr parseLoop();
     AST::NodePtr parseWhen();
     AST::NodePtr parseSwitch();
+    AST::NodePtr parseMatch();
     AST::NodePtr parseReturn();
     AST::NodePtr parseUnsafeBlock();
     AST::NodePtr parseCompileTimeIf();
+    // Body of a #if: accepts top-level constructs (imports, types) as well as
+    // statements. See stmt.cpp.
+    AST::NodeList parseCompileTimeBlock();
     AST::NodePtr parseVariableOrExpressionStatement();
     AST::NodePtr parseSectionBlock();
 
@@ -72,15 +78,28 @@ public:
     AST::NodePtr parseUnary();
     AST::NodePtr parsePostfix(AST::NodePtr base);
     AST::NodePtr parsePrimary();
+    AST::NodePtr parseLambda();
     AST::NodeList parseArguments();
 
 private:
     std::vector<Token> tokens_;
+    // The source this token stream came from, kept so a raw block (an `asm(...)`
+    // body) can be recovered verbatim by byte offset. Tokens carry start/end
+    // offsets, so the text between two tokens is exactly recoverable -- which
+    // reconstructing from the tokens themselves would not be, since spacing is
+    // lost. Empty when produceASTFromTokens is driven directly.
+    std::string source_;
     size_t index_ = 0;
     ScopeManager scopes_;
     bool panicMode_ = false;
+    int lambdaCounter_ = 0;
+
+    // Recovers the verbatim text of an `asm(...)` block body from the source and
+    // advances past the tokens the lexer produced for it. `open` is the '(' token.
+    bool parseRawAsmBody(const Token& open, AST::InlineAsmExpr& node);
 
     void predeclareTopLevel();
     void fillRange(AST::ExprAST& node, const Token& startToken) const;
     void fillRange(AST::ExprAST& node, const Token& startToken, const Token& endToken) const;
 };
+

@@ -1,0 +1,106 @@
+module main
+
+// A C-style enum is laid out as its declared underlying type: `enum C : u8` is one
+// byte, not eight. The declared width used to live only in sema's EnumInfo and
+// never reached the interned type, so the backend saw bitWidth 0 and fell back to
+// 64 bits for every enum.
+//
+// Sizes are only half of it. Narrowing an enum also narrows its loads and stores,
+// so the values have to be checked too -- especially for unsigned underlying
+// types, where a sign-extending load would turn 255 into -1. Every case below is
+// therefore a value check as well as a layout check.
+//
+// Enum variants are bare names (`Hi`, not `U8e.Hi`), so the names here are unique
+// across the file.
+
+enum U8e  : u8  { Lo = 1, Mid = 200, Hi = 255 }
+enum I8e  : i8  { Small = 7, Max = 127 }
+enum U16e : u16 { Big = 65535 }
+enum I16e : i16 { Peak = 32767 }
+enum U32e : u32 { Huge = 4000000000 }
+enum I32e : i32 { Large = 2000000000 }
+enum I64e : i64 { Vast = 9000000000 }
+enum Dflt       { First }              // no underlying type declared -> i32
+
+struct Rec { U8e a, U16e b, U32e c }   // 1 + pad + 2 + 4 = 8
+struct Pair { I32e a, I32e b }         // 4 + 4 = 8
+
+fun takeU8(U8e v) -> i64 { return cast<i64>(v) }
+fun roundTrip(Rec r) -> Rec { return r }
+
+fun main() -> i32 {
+    i32 e = 0
+
+    // --- sizes follow the declared underlying type ---------------------------
+    if U8e.insize != 1 { e = e + 1 }
+    if I8e.insize != 1 { e = e + 1 }
+    if U16e.insize != 2 { e = e + 1 }
+    if I16e.insize != 2 { e = e + 1 }
+    if U32e.insize != 4 { e = e + 1 }
+    if I32e.insize != 4 { e = e + 1 }
+    if I64e.insize != 8 { e = e + 1 }
+    if Dflt.insize != 4 { e = e + 1 }
+    if Rec.insize != 8 { e = e + 1 }
+    if Pair.insize != 8 { e = e + 1 }
+
+    // --- sizes agree with the emitted layout --------------------------------
+    Pair p
+    U8e[4] bytes
+    unsafe {
+        if cast<i64>(&p.b) - cast<i64>(&p.a) != 4 { e = e + 1 }
+        if cast<i64>(&bytes[1]) - cast<i64>(&bytes[0]) != 1 { e = e + 1 }
+    }
+
+    // --- values survive the narrower loads/stores ---------------------------
+    // An unsigned underlying type must zero-extend: 255 is 255, not -1.
+    if cast<i64>(Hi) != 255 { e = e + 1 }
+    if cast<i64>(Big) != 65535 { e = e + 1 }
+    if cast<i64>(Huge) != 4000000000 { e = e + 1 }
+    if cast<i64>(Max) != 127 { e = e + 1 }
+    if cast<i64>(Peak) != 32767 { e = e + 1 }
+    if cast<i64>(Large) != 2000000000 { e = e + 1 }
+    if cast<i64>(Vast) != 9000000000 { e = e + 1 }
+
+    // through variables
+    U8e u = Hi
+    if cast<i64>(u) != 255 { e = e + 1 }
+    U32e w = Huge
+    if cast<i64>(w) != 4000000000 { e = e + 1 }
+
+    // through a call, by value
+    if takeU8(Hi) != 255 { e = e + 1 }
+
+    // in a struct, and the struct itself by value
+    Rec r
+    r.a = Hi
+    r.b = Big
+    r.c = Huge
+    Rec back = roundTrip(r)
+    if cast<i64>(back.a) != 255 { e = e + 1 }
+    if cast<i64>(back.b) != 65535 { e = e + 1 }
+    if cast<i64>(back.c) != 4000000000 { e = e + 1 }
+
+    // in an array at a 1-byte stride
+    bytes[0] = Lo
+    bytes[1] = Mid
+    bytes[2] = Hi
+    bytes[3] = Lo
+    if cast<i64>(bytes[0]) != 1 { e = e + 1 }
+    if cast<i64>(bytes[1]) != 200 { e = e + 1 }
+    if cast<i64>(bytes[2]) != 255 { e = e + 1 }
+
+    // switch dispatch still selects the right arm
+    i64 hit = 0
+    switch u {
+        Lo -> hit = 1
+        Mid -> hit = 2
+        Hi -> hit = 3
+        _ -> hit = 9
+    }
+    if hit != 3 { e = e + 1 }
+
+    if e != 0 {
+        return 1
+    }
+    return 66
+}

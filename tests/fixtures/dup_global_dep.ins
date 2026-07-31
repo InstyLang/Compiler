@@ -1,0 +1,7 @@
+module dup_global_dep
+
+export i32 shared = 1
+
+export fun dep() -> i32 {
+    return shared
+}

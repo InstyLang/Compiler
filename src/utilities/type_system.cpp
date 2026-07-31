@@ -97,6 +97,15 @@ TypeRef TypeContext::sliceType(TypeRef element) {
     return intern(t);
 }
 
+TypeRef TypeContext::functionType(const std::vector<TypeRef>& params,
+                                  TypeRef returnType) {
+    Type t;
+    t.kind = Kind::Function;
+    t.params = params;
+    t.returnType = returnType;
+    return intern(t);
+}
+
 TypeRef TypeContext::namedType(Kind kind, const std::string& name) {
     Type t;
     t.kind = kind;
@@ -112,6 +121,28 @@ void TypeContext::registerNamed(const std::string& name, Kind kind) {
         }
     }
     named_.emplace_back(name, kind);
+}
+
+void TypeContext::registerEnumUnderlying(const std::string& name, int bitWidth,
+                                         bool isSigned) {
+    // Enum types compare by name (see equals), so the pool holds at most one
+    // instance per enum name and every reference to that enum -- past or future,
+    // in any module -- is that one pointer. Updating it in place therefore reaches
+    // references interned before the declaration was seen, which makes this
+    // independent of declaration/use order.
+    for (auto& existing : pool_) {
+        if (existing->kind == Kind::Enum && existing->name == name) {
+            existing->bitWidth = bitWidth;
+            existing->isSigned = isSigned;
+            return;
+        }
+    }
+    Type t;
+    t.kind = Kind::Enum;
+    t.name = name;
+    t.bitWidth = bitWidth;
+    t.isSigned = isSigned;
+    pool_.push_back(std::make_unique<Type>(std::move(t)));
 }
 
 TypeRef TypeContext::fromString(const std::string& spelling) {
@@ -220,7 +251,15 @@ std::string TypeContext::toString(TypeRef type) const {
         case Kind::Enum:
         case Kind::Class:
         case Kind::Generic: return type->name;
-        case Kind::Function: return "fn";
+        case Kind::Function: {
+            std::string s = "fn(";
+            for (size_t i = 0; i < type->params.size(); ++i) {
+                if (i) s += ", ";
+                s += toString(type->params[i]);
+            }
+            s += ") -> " + toString(type->returnType);
+            return s;
+        }
         case Kind::Error: return "<error>";
     }
     return "<?>";
@@ -252,6 +291,14 @@ bool TypeContext::equals(TypeRef a, TypeRef b) {
         case Kind::Class:
         case Kind::Generic:
             return a->name == b->name;
+        case Kind::Function: {
+            if (!equals(a->returnType, b->returnType)) return false;
+            if (a->params.size() != b->params.size()) return false;
+            for (size_t i = 0; i < a->params.size(); ++i) {
+                if (!equals(a->params[i], b->params[i])) return false;
+            }
+            return true;
+        }
         default:
             return true;
     }

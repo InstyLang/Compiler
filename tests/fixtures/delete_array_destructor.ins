@@ -1,0 +1,21 @@
+module main
+
+i32 destroyed = 0
+
+class Token {
+    i32 value
+
+    constructor(i32 v) {
+        this.value = v
+    }
+
+    destructor() -> void {
+        destroyed = destroyed + this.value
+    }
+}
+
+fun main() -> i32 {
+    Token* p = new Token[3](4)
+    delete p
+    return destroyed
+}

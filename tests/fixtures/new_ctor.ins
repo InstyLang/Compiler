@@ -1,0 +1,27 @@
+module test
+
+class Point {
+  i32 x
+  i32 y
+  constructor(i32 a, i32 b) {
+    this.x = a
+    this.y = b
+  }
+  fun sum() -> i32 {
+    return this.x + this.y
+  }
+}
+
+fun main() -> i32 {
+  unsafe {
+    // Scalar new T(...) : ctor runs with this = heap pointer.
+    Point* p = new Point(10, 20)
+    i32 s = p.sum()        // 30
+
+    // Array new T[n](...) : ctor runs on each of the 3 elements.
+    Point* arr = new Point[3](4, 5)
+    i32 t = arr[2].sum()   // 9  (third element was constructed)
+
+    return s + t           // 39
+  }
+}

@@ -1,0 +1,20 @@
+module main
+
+// Atomics need the WebAssembly threads proposal. Rejected with an explanation
+// rather than silently emitting a non-atomic access, which would be a data race
+// the user never asked for.
+
+fun bump(i32* p) -> i32 {
+    unsafe {
+        return atomicFetchAdd<i32>(p, 1)
+    }
+    return 0
+}
+
+fun main() -> i32 {
+    i32 v = 0
+    unsafe {
+        return bump(&v)
+    }
+    return 0
+}

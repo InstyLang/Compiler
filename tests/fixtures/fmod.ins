@@ -1,0 +1,38 @@
+module main
+
+// Exercises custom-backend floating-point remainder (`%`), which has no SSE
+// instruction and is synthesized as  a - trunc(a / b) * b.
+
+fun frem64(f64 a, f64 b) -> f64 {
+    return a % b
+}
+
+fun frem32(f32 a, f32 b) -> f32 {
+    return a % b
+}
+
+fun main() -> i32 {
+    i32 acc = 0
+
+    // 10.0 % 3.0 == 1.0
+    f64 r1 = frem64(10.0, 3.0)
+    acc = acc + cast<i32>(r1)            // +1
+
+    // 17.5 % 5.0 == 2.5  -> trunc 2
+    f64 r2 = 17.5 % 5.0
+    acc = acc + cast<i32>(r2)            // +2
+
+    // negative dividend: -7.0 % 3.0 == -1.0 (C fmod semantics)
+    f64 r3 = frem64(-7.0, 3.0)
+    acc = acc - cast<i32>(r3)            // -(-1) = +1
+
+    // f32 path: 9.0 % 4.0 == 1.0
+    f32 r4 = frem32(cast<f32>(9.0), cast<f32>(4.0))
+    acc = acc + cast<i32>(r4)            // +1
+
+    // 100.0 % 7.0 == 2.0
+    f64 r5 = 100.0 % 7.0
+    acc = acc + cast<i32>(r5)            // +2
+
+    return acc                            // 1 + 2 + 1 + 1 + 2 = 7
+}

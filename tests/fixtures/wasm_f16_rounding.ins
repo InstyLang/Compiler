@@ -1,0 +1,38 @@
+module main
+
+// Round-trips values through f16 that are NOT exactly representable, so the
+// round-to-nearest-even behaviour of the conversion is observable. Covers the
+// normal range, the subnormal range, and overflow to infinity. Any disagreement
+// in rounding changes the checksum.
+fun main() -> i32 {
+    i32 acc = 0
+
+    // Normal range: i/3 is never exact in binary.
+    for i in 1..400 {
+        f32 v = cast<f32>(i) / cast<f32>(3.0)
+        f16 h = cast<f16>(v)
+        f32 b = cast<f32>(h)
+        acc = acc + cast<i32>(b * cast<f32>(2048.0))
+    }
+
+    // Subnormal range: below 2^-14 the mantissa is progressively truncated.
+    for i in 1..80 {
+        f32 s = cast<f32>(i) / cast<f32>(30000000.0)
+        f16 hs = cast<f16>(s)
+        f32 bs = cast<f32>(hs)
+        acc = acc + cast<i32>(bs * cast<f32>(1000000000.0))
+    }
+
+    // Overflow saturates to infinity, which round-trips as a huge f32.
+    f32 big = cast<f32>(70000.0)
+    f16 hb = cast<f16>(big)
+    f32 bb = cast<f32>(hb)
+    if bb > cast<f32>(65600.0) { acc = acc + 7 }
+
+    // Ties: 2049 is exactly halfway between two representable halves.
+    f16 t = cast<f16>(2049.0)
+    acc = acc + cast<i32>(cast<f32>(t))
+
+    if acc < 0 { acc = 0 - acc }
+    return acc % 100
+}

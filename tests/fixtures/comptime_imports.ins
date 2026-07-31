@@ -1,0 +1,33 @@
+module main
+
+// Conditional imports.
+//
+// `#if` selects between whole top-level declarations, imports included. That
+// matters more than conditional statements do: an import pulls in a dependency,
+// and a dependency that only exists (or only compiles) on one target must not be
+// resolved on the others. The dependency scan therefore resolves compile-time
+// conditionals before it reads the import list.
+//
+// Returns 42 on every target, having imported a different module to get there.
+
+#if @targetIs("wasm") {
+    import condimp_dep
+} #else {
+    import std::io
+}
+
+// A conditional declaration, not just a conditional statement: only one of these
+// is ever parsed into the program.
+#if @targetIs("wasm") {
+    fun source() -> i32 {
+        return condimp_dep.answer()
+    }
+} #else {
+    fun source() -> i32 {
+        return 42
+    }
+}
+
+fun main() -> i32 {
+    return source()
+}

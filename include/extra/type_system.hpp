@@ -48,7 +48,7 @@ struct Type {
     bool isFloat() const { return kind == Kind::Float; }
     bool isNumeric() const { return kind == Kind::Int || kind == Kind::Float; }
     bool isPointerLike() const {
-        return kind == Kind::Pointer || kind == Kind::Text || kind == Kind::Slice;
+        return kind == Kind::Pointer || kind == Kind::Text;
     }
     bool isError() const { return kind == Kind::Error; }
     bool isVoid() const { return kind == Kind::Void; }
@@ -75,6 +75,7 @@ public:
     TypeRef pointerType(TypeRef element, bool isVolatile = false);
     TypeRef arrayType(TypeRef element, int64_t length);
     TypeRef sliceType(TypeRef element);
+    TypeRef functionType(const std::vector<TypeRef>& params, TypeRef returnType);
     TypeRef namedType(Kind kind, const std::string& name);
 
     TypeRef fromString(const std::string& spelling);
@@ -84,6 +85,14 @@ public:
     static bool equals(TypeRef a, TypeRef b);
 
     void registerNamed(const std::string& name, Kind kind);
+
+    // Records the layout of a C-style enum: it occupies its declared underlying
+    // type (`enum C : i32` is four bytes, not eight). The width has to live on the
+    // interned Type itself, because the backend's sizeOf/alignOf/widthOf and
+    // scalarSizeAlign for globals all read `bitWidth` -- if any of them answered
+    // differently, the same enum would get one size as a field, another as an
+    // array element, and another as a global.
+    void registerEnumUnderlying(const std::string& name, int bitWidth, bool isSigned);
 
 private:
     Type void_;

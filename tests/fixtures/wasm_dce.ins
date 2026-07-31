@@ -1,0 +1,20 @@
+module main
+
+// Dead-code elimination for the WebAssembly backend.
+//
+// There is no linker, so nothing else will ever drop a function that is never
+// called. This imports the whole WASI surface -- console and file access, around
+// thirty functions between them -- and calls exactly one of them. Everything
+// else, and the data it referenced, must be gone from the emitted module.
+//
+// The companion test asserts an upper bound on the module size rather than an
+// exact function list, so it survives the library growing but still fails loudly
+// if elimination stops working.
+
+import wasi::io
+import wasi::fs
+
+fun main() -> i32 {
+    wasi.println("one call")
+    return 0
+}

@@ -1,0 +1,28 @@
+module main
+
+// Heap-backed slices: `new i32[n]` yields a slice whose `.len` is the allocation
+// count. Fills, sums, and returns 42 (6 * 7).
+
+fun fill(i32[] xs, i32 value) -> void {
+    i64 i = 0
+    while i < xs.len {
+        xs[i] = value
+        i = i + 1
+    }
+}
+
+fun sum(i32[] xs) -> i32 {
+    i32 total = 0
+    i64 i = 0
+    while i < xs.len {
+        total = total + xs[i]
+        i = i + 1
+    }
+    return total
+}
+
+fun main() -> i32 {
+    i32[] s = new i32[6]
+    fill(s, 7)
+    return sum(s)
+}

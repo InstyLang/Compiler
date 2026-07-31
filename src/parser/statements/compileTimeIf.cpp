@@ -21,18 +21,27 @@ AST::NodePtr Parser::parseCompileTimeIf() {
     AST::CompileTimeBranch branch;
     branch.condition = ecxParseCondition(*this);
     skipNewlines();
-    branch.body = parseBlock();
+    branch.body = parseCompileTimeBlock();
     node->branches.push_back(std::move(branch));
 
+    // Chain of `#else if <cond> { ... }`, optionally closed by `#else { ... }`.
+    // A branch with no condition is the else, and nothing may follow it.
     skipNewlines();
-    if (check(TokenType::Hash) && peek().type == TokenType::KwElse) {
-        advance();
-        advance();
-        AST::CompileTimeBranch elseBranch;
-        elseBranch.condition = nullptr;
+    while (check(TokenType::Hash) && peek().type == TokenType::KwElse) {
+        advance();  // '#'
+        advance();  // 'else'
+
+        AST::CompileTimeBranch next;
+        if (check(TokenType::KwIf)) {
+            advance();
+            next.condition = ecxParseCondition(*this);
+        }
+        const bool isElse = next.condition == nullptr;
         skipNewlines();
-        elseBranch.body = parseBlock();
-        node->branches.push_back(std::move(elseBranch));
+        next.body = parseCompileTimeBlock();
+        node->branches.push_back(std::move(next));
+        skipNewlines();
+        if (isElse) break;
     }
 
     fillRange(*node, start);

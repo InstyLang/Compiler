@@ -1,0 +1,109 @@
+module main
+
+// Control-flow coverage for the WebAssembly backend.
+//
+// The Machine IR is an unstructured CFG; wasm only has structured scopes. These
+// functions exercise the dispatch loop that bridges them: forward branches,
+// back edges (loops), nested scopes, early returns, and multi-target
+// conditionals. All are call-free, since calls are a later phase.
+
+// Forward branches and early returns out of nested ifs.
+fun classify(i32 v) -> i32 {
+    if v > 100 {
+        return 3
+    } else {
+        if v > 10 {
+            return 2
+        }
+    }
+    return 1
+}
+
+// A back edge: sum 1..n with a while loop.
+fun sumto(i32 n) -> i32 {
+    i32 total = 0
+    i32 i = 1
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    return total
+}
+
+// for-in over an integer range.
+fun forsum(i32 n) -> i32 {
+    i32 total = 0
+    for i in 0..n {
+        total = total + i
+    }
+    return total
+}
+
+// break and skip: skips i == 3, stops at i == 7.
+fun brk(i32 n) -> i32 {
+    i32 acc = 0
+    i32 i = 0
+    while i < n {
+        i = i + 1
+        if i == 3 {
+            skip
+        }
+        if i == 7 {
+            break
+        }
+        acc = acc + i
+    }
+    return acc
+}
+
+// Nested loops: the inner loop's back edge is inside the outer loop's.
+fun nested(i32 n) -> i32 {
+    i32 acc = 0
+    for i in 0..n {
+        for j in 0..n {
+            acc = acc + 1
+        }
+    }
+    return acc
+}
+
+// Short-circuit && and ||, which the selector lowers into extra basic blocks
+// with their own joins.
+fun logic(i32 a, i32 b) -> i32 {
+    i32 r = 0
+    if a > 0 && b > 0 {
+        r = r + 1
+    }
+    if a > 100 || b > 100 {
+        r = r + 2
+    }
+    return r
+}
+
+// An unsigned back edge with a descending counter.
+fun countdown(i32 n) -> i32 {
+    i32 steps = 0
+    while n > 0 {
+        n = n - 1
+        steps = steps + 1
+    }
+    return steps
+}
+
+// Combines a range loop, a while loop and a conditional inline (calls are a
+// later phase, so main cannot delegate to the functions above).
+fun main() -> i32 {
+    i32 total = 0
+    for i in 0..5 {
+        total = total + i        // 0+1+2+3+4      = 10
+    }
+    i32 j = 1
+    while j <= 7 {
+        total = total + j        // +1+2+..+7 = 28 => 38
+        j = j + 1
+    }
+    if total > 30 {
+        total = total + 4        //                => 42
+    }
+    return total
+}

@@ -1,0 +1,134 @@
+// Insty standard library: wasi::fs
+//
+// File access for the wasm32_wasi target, on top of the WASI preview1 path_open
+// and fd_read / fd_write imports.
+//
+// This is the wasm counterpart of std::fs, which issues raw Linux syscalls.
+//
+// WASI is capability based: a module cannot name an arbitrary path. The host must
+// grant a directory up front (`wasmtime run --dir . prog.wasm`), which arrives as
+// a preopened descriptor -- normally 3 -- and every path here is resolved
+// relative to it.
+//
+// Usage:
+//     import wasi::fs
+//
+//     fun main() -> i32 {
+//         i32 fd = wasi.open_read("data.txt")
+//         if fd < 0 { return 1 }
+//         u8[256] buf
+//         unsafe {
+//             i64 n = wasi.read(fd, cast<u8*>(&buf), 256)
+//             wasi.close(fd)
+//         }
+//         return 0
+//     }
+
+module wasi
+
+import std::str
+
+import wasi::sys
+
+// Open an existing file for reading, relative to the first preopened directory.
+// Returns the descriptor, or a negative errno.
+export fun open_read(text path) -> i32 {
+    unsafe {
+        i32 fd = 0
+        i32 rc = path_open(first_preopen_fd(), 0, cast<u8*>(path),
+                           cast<i32>(str.len(path)), 0,
+                           rights_file(), rights_file(), 0, &fd)
+        if rc != 0 {
+            return 0 - rc
+        }
+        return fd
+    }
+    return 0 - 1
+}
+
+// Create (or truncate) a file for writing, relative to the first preopened
+// directory. Returns the descriptor, or a negative errno.
+export fun create_write(text path) -> i32 {
+    unsafe {
+        i32 fd = 0
+        i32 flags = oflag_creat() | oflag_trunc()
+        i32 rc = path_open(first_preopen_fd(), 0, cast<u8*>(path),
+                           cast<i32>(str.len(path)), flags,
+                           rights_file(), rights_file(), 0, &fd)
+        if rc != 0 {
+            return 0 - rc
+        }
+        return fd
+    }
+    return 0 - 1
+}
+
+// Read up to `len` bytes into `buffer`. Returns the byte count (0 at end of
+// file), or a negative errno.
+export fun read(i32 fd, u8* buffer, i64 len) -> i64 {
+    unsafe {
+        Ciovec iov
+        iov.buf = cast<u32>(cast<u64>(buffer))
+        iov.buf_len = cast<u32>(len)
+        u32 got = 0
+        i32 rc = fd_read(fd, cast<u8*>(&iov), 1, &got)
+        if rc != 0 {
+            return 0 - cast<i64>(rc)
+        }
+        return cast<i64>(got)
+    }
+    return 0
+}
+
+// Write `len` bytes from `buffer`. Returns the byte count written, or a negative
+// errno.
+export fun write(i32 fd, u8* buffer, i64 len) -> i64 {
+    unsafe {
+        Ciovec iov
+        iov.buf = cast<u32>(cast<u64>(buffer))
+        iov.buf_len = cast<u32>(len)
+        u32 put = 0
+        i32 rc = fd_write(fd, cast<u8*>(&iov), 1, &put)
+        if rc != 0 {
+            return 0 - cast<i64>(rc)
+        }
+        return cast<i64>(put)
+    }
+    return 0
+}
+
+// Write a NUL-terminated string. Returns the byte count written.
+export fun write_text(i32 fd, text s) -> i64 {
+    unsafe {
+        return write(fd, cast<u8*>(s), cast<i64>(str.len(s)))
+    }
+    return 0
+}
+
+export fun close(i32 fd) -> i32 {
+    return fd_close(fd)
+}
+
+// Delete a file relative to the first preopened directory.
+export fun remove(text path) -> i32 {
+    unsafe {
+        return path_unlink_file(first_preopen_fd(), cast<u8*>(path),
+                                cast<i32>(str.len(path)))
+    }
+    return 0 - 1
+}
+
+// Reposition a descriptor to an absolute offset. Returns the new offset, or a
+// negative errno.
+export fun seek(i32 fd, i64 offset) -> i64 {
+    unsafe {
+        u64 pos = 0
+        i32 rc = fd_seek(fd, offset, whence_set(), &pos)
+        if rc != 0 {
+            return 0 - cast<i64>(rc)
+        }
+        return cast<i64>(pos)
+    }
+    return 0
+}
+

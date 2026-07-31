@@ -1,0 +1,16 @@
+module main
+
+// Weak symbol regression for the custom backend's COFF writer. `wfn` is a weak
+// definition (IMAGE_SYM_CLASS_WEAK_EXTERNAL + a ".weak.wfn.default" alias),
+// linked here as the fallback (returns 7). When a strong definition of `wfn` is
+// linked in alongside this object it must override the weak default. `[name(wfn)]`
+// pins the link symbol so a strong def in another module can match it.
+
+[linkage(weak), name(wfn)]
+fun wfn() -> i32 {
+    return 7
+}
+
+fun main() -> i32 {
+    return wfn()
+}

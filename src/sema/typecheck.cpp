@@ -1,7 +1,10 @@
 #include <sema/checker.hpp>
 
 #include <cctype>
+#include <memory>
+#include <set>
 
+#include <extra/ast_clone.hpp>
 #include <extra/builtins.hpp>
 
 
@@ -109,7 +112,21 @@ Types::TypeRef Checker::resolveTypeSpelling(const std::string& spelling,
         }
     }
 
-    Types::TypeRef t = types_.fromString(spelling);
+    // Substitute active generic parameters that appear as the leading token of a
+    // compound spelling (e.g. `T[]`, `T*`, `T[][]`) before interning, so a generic
+    // body's local/temporary types monomorphize like its params and fields do. A
+    // bare `T` is also covered here (and again below as a safety net).
+    std::string resolved = spelling;
+    if (!currentSubst_.empty()) {
+        for (const auto& entry : currentSubst_) {
+            if (entry.second) {
+                resolved = substituteSpelling(resolved, entry.first,
+                                              types_.toString(entry.second));
+            }
+        }
+    }
+
+    Types::TypeRef t = types_.fromString(resolved);
     if (t && t->kind == Types::Kind::Generic && !currentSubst_.empty()) {
         auto it = currentSubst_.find(t->name);
         if (it != currentSubst_.end() && it->second) {
@@ -158,6 +175,22 @@ Types::TypeRef Checker::enumUnderlying(Types::TypeRef t) const {
     return t;
 }
 
+const FunctionInfo* Checker::findFunctionByMangled(const std::string& mangled) const {
+    for (const auto& fn : result_.functions) {
+        const std::string& symbol = fn.mangledName.empty() ? fn.name : fn.mangledName;
+        if (symbol == mangled) {
+            return &fn;
+        }
+    }
+    for (const auto& fn : importedStore_) {
+        const std::string& symbol = fn.mangledName.empty() ? fn.name : fn.mangledName;
+        if (symbol == mangled) {
+            return &fn;
+        }
+    }
+    return nullptr;
+}
+
 bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
                            bool valueIsLiteral) {
     if (!target || !value) return true;
@@ -185,6 +218,26 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         return target->bitWidth >= value->bitWidth;
     }
     if (target->isPointerLike() && value->isInteger() && valueIsLiteral) return true;
+    return false;
+}
+
+bool Checker::isSliceInitializer(Types::TypeRef target, Types::TypeRef value,
+                                 const AST::NodePtr& valueNode) {
+    if (!target || !value || target->kind != Types::Kind::Slice) return false;
+    if (target->isError() || value->isError()) return true;
+    if (value->kind == Types::Kind::Slice) {
+        return Types::TypeContext::equals(target->element, value->element);
+    }
+    if (value->kind == Types::Kind::Array) {
+        return Types::TypeContext::equals(target->element, value->element);
+    }
+    // Raw pointers do not carry a length. The only pointer expression accepted as
+    // slice sugar is `new T[n]`, where codegen can reuse the allocation count for
+    // the slice header. Other pointers must be exposed explicitly as `.ptr` later.
+    if (value->kind == Types::Kind::Pointer && valueNode &&
+        valueNode->nodeType() == AST::NodeType::NewExpression) {
+        return Types::TypeContext::equals(target->element, value->element);
+    }
     return false;
 }
 
@@ -257,7 +310,11 @@ void Checker::checkFunction(const FunctionInfo& info) {
 
 void Checker::checkInstantiationBody(const GenericInstantiation& inst) {
     if (!inst.templateDecl) return;
-    AST::FunctionDeclaration* decl = inst.templateDecl;
+    // Check this instantiation's own copy of the body, so the types recorded per
+    // node describe this instantiation rather than whichever one happened to be
+    // checked last. Falls back to the template only if no copy was made.
+    AST::FunctionDeclaration* decl =
+        inst.decl ? inst.decl.get() : inst.templateDecl;
 
     std::map<std::string, Types::TypeRef> savedSubst = currentSubst_;
     const FunctionInfo* savedFn = currentFn_;
@@ -359,7 +416,38 @@ std::string Checker::instantiateGenericClass(const std::string& templateName,
     Types::TypeRef classType = types_.namedType(Types::Kind::Class, mangled);
     Types::TypeRef classPtr = types_.pointerType(classType);
 
-    for (auto& m : tmpl->methods) {
+    // One deep copy of every method per instantiation. The copies are spelled
+    // exactly like the template (still in terms of `T`); only their node
+    // identity differs. That is what keeps each instantiation's recorded types
+    // separate -- see AST::cloneNode and GenericClassInstantiation::methods.
+    std::vector<std::shared_ptr<AST::Method>> instanceMethods;
+    instanceMethods.reserve(tmpl->methods.size());
+    for (const auto& templateMethod : tmpl->methods) {
+        instanceMethods.push_back(
+            std::make_shared<AST::Method>(AST::cloneMethod(templateMethod)));
+    }
+
+    for (const auto& methodOwner : instanceMethods) {
+        AST::Method& m = *methodOwner;
+        if (m.isDestructor) {
+            if (!m.parameters.empty()) {
+                emit("E1501", "destructor for class '" + mangled + "' cannot take parameters",
+                     at, "declare it exactly as `destructor() -> void`");
+            }
+            if (!m.hasExplicitReturnType) {
+                emit("E1501", "destructor for class '" + mangled +
+                               "' must explicitly return void",
+                     at, "declare it exactly as `destructor() -> void`");
+            } else {
+                Types::TypeRef dtorRet = resolveTypeSpelling(substituteAll(m.returnType), at);
+                if (!dtorRet || !dtorRet->isVoid()) {
+                    emit("E1501", "destructor for class '" + mangled +
+                                   "' must return void",
+                         at, "declare it exactly as `destructor() -> void`");
+                }
+            }
+        }
+
         std::vector<std::string> paramTypeSpellings;
         std::vector<Types::TypeRef> paramTypes;
         std::vector<std::string> paramNames;
@@ -381,16 +469,19 @@ std::string Checker::instantiateGenericClass(const std::string& templateName,
         fi.mangledName = memberMangled;
         fi.paramTypes = paramTypes;
         fi.paramNames = paramNames;
-        fi.returnType = m.isConstructor
+        fi.returnType = (m.isConstructor || m.isDestructor)
                             ? types_.voidType()
                             : resolveTypeSpelling(substituteAll(m.returnType), at);
         fi.isExternal = false;
+        fi.isGenericInstance = true;
         fi.decl = nullptr;
         result_.functions.push_back(fi);
 
         if (m.isConstructor) {
             cinfo.constructorMangled = memberMangled;
             cinfo.constructorParams.assign(paramTypes.begin() + 1, paramTypes.end());
+        } else if (m.isDestructor) {
+            cinfo.destructorMangled = memberMangled;
         } else if (m.isOperator) {
             cinfo.operatorMangled[m.operatorSymbol] = memberMangled;
         } else {
@@ -409,6 +500,7 @@ std::string Checker::instantiateGenericClass(const std::string& templateName,
     gci.mangledName = mangled;
     gci.templateDecl = tmpl;
     gci.typeArgs = typeArgs;
+    gci.methods = std::move(instanceMethods);
     result_.genericClassInstantiations.push_back(std::move(gci));
 
     return mangled;
@@ -428,7 +520,7 @@ void Checker::checkGenericClassMethod(const PendingGenericMethod& pm) {
     currentSubst_ = pm.subst;
     currentThis_ = pm.classPtr;
     currentClass_ = pm.className;
-    currentReturn_ = method.isConstructor
+    currentReturn_ = (method.isConstructor || method.isDestructor)
                          ? types_.voidType()
                          : resolveTypeSpelling(method.returnType, nullptr);
     currentFn_ = nullptr;
@@ -474,11 +566,17 @@ void Checker::checkStatement(const AST::NodePtr& node) {
         case AST::NodeType::InfiniteLoop:
             checkLoop(static_cast<AST::InfiniteLoop*>(node.get()));
             break;
+        case AST::NodeType::ForLoop:
+            checkFor(static_cast<AST::ForLoop*>(node.get()));
+            break;
         case AST::NodeType::WhenStatement:
             checkWhen(static_cast<AST::WhenStatement*>(node.get()));
             break;
         case AST::NodeType::SwitchStatement:
             checkSwitch(static_cast<AST::SwitchStatement*>(node.get()));
+            break;
+        case AST::NodeType::MatchStatement:
+            checkMatch(static_cast<AST::MatchStatement*>(node.get()));
             break;
         case AST::NodeType::ReturnStatement:
             checkReturn(static_cast<AST::ReturnStatement*>(node.get()));
@@ -498,8 +596,11 @@ void Checker::checkStatement(const AST::NodePtr& node) {
 
 void Checker::checkVarDecl(AST::VariableDeclarationExpr* node) {
     if (!node) return;
+    // `auto` requests type inference from the initializer (like C++). Leave
+    // `declared` null so the initializer's type becomes the variable's type.
+    const bool isAuto = node->typeHint == "auto";
     Types::TypeRef declared = nullptr;
-    if (!node->typeHint.empty()) {
+    if (!node->typeHint.empty() && !isAuto) {
         declared = resolveTypeSpelling(node->typeHint, node);
         if (node->isArray && declared && !declared->isError() &&
             declared->kind != Types::Kind::Array &&
@@ -518,13 +619,20 @@ void Checker::checkVarDecl(AST::VariableDeclarationExpr* node) {
         checkExpr(arg);
     }
 
+    if (isAuto && !node->initialValue) {
+        emit("E2006", "'auto' variable '" + node->identifier +
+                          "' requires an initializer to infer its type",
+             node, "write `auto name = <value>`");
+    }
+
     Types::TypeRef finalType = declared;
     if (!finalType) {
         finalType = initType ? initType : types_.errorType();
     }
 
     if (declared && initType && !declared->isError() && !initType->isError()) {
-        if (!isAssignable(declared, initType, initLiteral)) {
+        if (!isAssignable(declared, initType, initLiteral) &&
+            !isSliceInitializer(declared, initType, node->initialValue)) {
             emit("E2005", "cannot initialize '" + node->identifier + "' of type " +
                               types_.toString(declared) + " with value of type " +
                               types_.toString(initType),
@@ -548,7 +656,8 @@ void Checker::checkAssignment(AST::AssignmentExpr* node) {
     }
     bool valLiteral = isIntLiteral(node->value);
     if (targetType && valueType && !targetType->isError() && !valueType->isError()) {
-        if (!isAssignable(targetType, valueType, valLiteral)) {
+        if (!isAssignable(targetType, valueType, valLiteral) &&
+            !isSliceInitializer(targetType, valueType, node->value)) {
             emit("E2004", "cannot assign value of type " + types_.toString(valueType) +
                               " to target of type " + types_.toString(targetType),
                  node, "types must match (only implicit numeric widening is allowed)");
@@ -594,6 +703,55 @@ void Checker::checkLoop(AST::InfiniteLoop* node) {
     popScope();
 }
 
+void Checker::checkFor(AST::ForLoop* node) {
+    if (!node) return;
+    pushScope();
+
+    Types::TypeRef varType = types_.errorType();
+    if (node->isRange) {
+        Types::TypeRef ts = node->rangeStart ? checkExpr(node->rangeStart)
+                                             : types_.errorType();
+        Types::TypeRef te = node->rangeEnd ? checkExpr(node->rangeEnd)
+                                           : types_.errorType();
+        auto requireInt = [&](Types::TypeRef t, const AST::NodePtr& at) {
+            if (t && !t->isError() && !t->isInteger()) {
+                emit("E2016", "for-range bound must be an integer", at.get(),
+                     "got " + types_.toString(t));
+            }
+        };
+        requireInt(ts, node->rangeStart);
+        requireInt(te, node->rangeEnd);
+        // The loop variable spans both bounds: use their unified integer type
+        // (falling back to i64) so `for i in 0..xs.len` gives `i` an i64.
+        if (ts && te && ts->isInteger() && te->isInteger()) {
+            varType = arithResult(ts, te);
+        } else {
+            varType = types_.intType(64, true);
+        }
+    } else {
+        Types::TypeRef it = node->iterable ? checkExpr(node->iterable)
+                                           : types_.errorType();
+        if (it && !it->isError()) {
+            if (it->kind == Types::Kind::Slice || it->kind == Types::Kind::Array) {
+                varType = it->element ? it->element : types_.errorType();
+            } else if (it->kind == Types::Kind::Text) {
+                varType = types_.intType(8, false);  // bytes
+            } else {
+                emit("E2016", "cannot iterate a value of type " + types_.toString(it),
+                     node->iterable.get(),
+                     "for-in iterates a slice, fixed array, or text");
+            }
+        }
+    }
+
+    // Record the loop-variable type on the node so the backend can reproduce it
+    // exactly (width/signedness for the range counter, element type otherwise).
+    record(node, varType);
+    declareLocal(node->varName, varType, node);
+    checkBlock(node->body);
+    popScope();
+}
+
 void Checker::checkWhen(AST::WhenStatement* node) {
     if (!node) return;
     if (node->condition) checkExpr(node->condition);
@@ -605,7 +763,18 @@ void Checker::checkWhen(AST::WhenStatement* node) {
 void Checker::checkSwitch(AST::SwitchStatement* node) {
     if (!node) return;
     Types::TypeRef subjT = node->subject ? checkExpr(node->subject) : nullptr;
+
+    // Track coverage for exhaustiveness: `switch` is exhaustive like Rust's
+    // `match`. A `_` arm covers everything; otherwise an enum subject must name
+    // every variant and a bool subject must cover true and false. Any other
+    // subject type cannot be matched exhaustively and requires a `_` arm.
+    bool hasDefault = false;
+    std::set<std::string> coveredNames;  // enum-variant / identifier patterns
+    bool coveredTrue = false;
+    bool coveredFalse = false;
+
     for (auto& arm : node->arms) {
+        if (arm.isDefault) hasDefault = true;
         for (auto& pat : arm.patterns) {
             Types::TypeRef pt = checkExpr(pat);
             if (subjT && pt && !subjT->isError() && !pt->isError() &&
@@ -616,15 +785,181 @@ void Checker::checkSwitch(AST::SwitchStatement* node) {
                                   types_.toString(subjT),
                      pat.get(), "patterns are matched against the subject with '=='");
             }
+            // Record what this constant pattern covers.
+            AST::ExprAST* p = pat.get();
+            if (p->nodeType() == AST::NodeType::IdentifierExpr) {
+                coveredNames.insert(static_cast<AST::IdentifierExpr*>(p)->name);
+            } else if (p->nodeType() == AST::NodeType::MemberAccess) {
+                auto* m = static_cast<AST::MemberAccessExpr*>(p);
+                if (m->property &&
+                    m->property->nodeType() == AST::NodeType::IdentifierExpr) {
+                    coveredNames.insert(
+                        static_cast<AST::IdentifierExpr*>(m->property.get())->name);
+                }
+            } else if (p->nodeType() == AST::NodeType::BoolLiteral) {
+                if (static_cast<AST::BoolLiteral*>(p)->value) coveredTrue = true;
+                else coveredFalse = true;
+            }
         }
         pushScope();
         checkBlock(arm.body);
         popScope();
     }
+
+    // A default arm makes any switch exhaustive.
+    if (hasDefault || !subjT || subjT->isError()) return;
+
+    if (subjT->kind == Types::Kind::Enum) {
+        const EnumInfo* ei = nullptr;
+        for (const auto& e : result_.enums) {
+            if (e.name == subjT->name) { ei = &e; break; }
+        }
+        if (ei) {
+            std::string missing;
+            for (const auto& v : ei->variants) {
+                if (!coveredNames.count(v.first)) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += v.first;
+                }
+            }
+            if (!missing.empty()) {
+                emit("E2014", "non-exhaustive switch on enum '" + subjT->name +
+                                  "': missing " + missing,
+                     node, "cover every variant, or add a `_ -> ...` default arm");
+            }
+        }
+    } else if (subjT->kind == Types::Kind::Bool) {
+        if (!(coveredTrue && coveredFalse)) {
+            emit("E2014",
+                 "non-exhaustive switch on bool: must cover both true and false",
+                 node, "add the missing case, or a `_ -> ...` default arm");
+        }
+    } else {
+        emit("E2014", "non-exhaustive switch on " + types_.toString(subjT) +
+                          ": this type cannot be matched exhaustively",
+             node, "add a `_ -> ...` default arm");
+    }
+}
+
+const SumTypeInfo* Checker::sumTypeByName(const std::string& name) const {
+    for (const auto& st : result_.sumTypes) {
+        if (st.name == name) return &st;
+    }
+    return nullptr;
+}
+
+const SumTypeInfo* Checker::asSumVariantAccess(const AST::MemberAccessExpr* m,
+                                               const SumVariant** outVariant) const {
+    if (outVariant) *outVariant = nullptr;
+    if (!m || m->computed || m->isScope) {
+        // `E::V` scope access is also acceptable; handle both dot and scope.
+    }
+    if (!m || m->computed) return nullptr;
+    if (!m->object || m->object->nodeType() != AST::NodeType::IdentifierExpr)
+        return nullptr;
+    const std::string& typeName =
+        static_cast<const AST::IdentifierExpr&>(*m->object).name;
+    const SumTypeInfo* st = sumTypeByName(typeName);
+    if (!st) return nullptr;
+    if (!m->property || m->property->nodeType() != AST::NodeType::IdentifierExpr)
+        return st;
+    const std::string& variantName =
+        static_cast<const AST::IdentifierExpr&>(*m->property).name;
+    if (outVariant) {
+        for (const auto& v : st->variants) {
+            if (v.name == variantName) { *outVariant = &v; break; }
+        }
+    }
+    return st;
+}
+
+void Checker::checkMatch(AST::MatchStatement* node) {
+    if (!node) return;
+    Types::TypeRef subjT = node->subject ? checkExpr(node->subject) : nullptr;
+    const SumTypeInfo* st =
+        (subjT && !subjT->isError()) ? sumTypeByName(subjT->name) : nullptr;
+    if (subjT && !subjT->isError() && !st) {
+        emit("E2018", "match requires a tagged-union value, got " +
+                          types_.toString(subjT),
+             node->subject.get(), "match works on sum-type enums");
+    }
+
+    bool hasDefault = false;
+    std::set<std::string> covered;
+    for (auto& arm : node->arms) {
+        pushScope();
+        if (arm.isDefault) {
+            hasDefault = true;
+        } else if (st) {
+            const SumVariant* v = nullptr;
+            for (const auto& cand : st->variants) {
+                if (cand.name == arm.variant) { v = &cand; break; }
+            }
+            if (!v) {
+                emit("E2018", "'" + arm.variant + "' is not a variant of '" +
+                                  st->name + "'",
+                     node, "");
+            } else {
+                covered.insert(arm.variant);
+                if (arm.bindings.size() != v->payload.size()) {
+                    emit("E2018", "variant '" + arm.variant + "' binds " +
+                                      std::to_string(v->payload.size()) +
+                                      " field(s), got " +
+                                      std::to_string(arm.bindings.size()),
+                         node, "match `Variant(a, b)` must bind each payload field");
+                } else {
+                    for (size_t i = 0; i < arm.bindings.size(); ++i) {
+                        declareLocal(arm.bindings[i], v->payload[i], node);
+                    }
+                }
+            }
+        }
+        checkBlock(arm.body);
+        popScope();
+    }
+
+    if (!hasDefault && st) {
+        std::string missing;
+        for (const auto& v : st->variants) {
+            if (!covered.count(v.name)) {
+                if (!missing.empty()) missing += ", ";
+                missing += v.name;
+            }
+        }
+        if (!missing.empty()) {
+            emit("E2014", "non-exhaustive match on '" + st->name +
+                              "': missing " + missing,
+                 node, "cover every variant, or add a `_ => ...` default arm");
+        }
+    }
 }
 
 void Checker::checkReturn(AST::ReturnStatement* node) {
     if (!node) return;
+    // Auto-return inference (lambda bodies): unify the types of all returned
+    // values. A concrete type wins over one derived from an integer literal, and
+    // two integers unify to the wider width, so e.g. `return 0` followed by
+    // `return some_i64_call()` infers i64.
+    if (inferReturn_) {
+        Types::TypeRef vt = node->returnValue ? checkExpr(node->returnValue)
+                                              : types_.voidType();
+        const bool lit = node->returnValue && isIntLiteral(node->returnValue);
+        if (!inferredReturn_) {
+            inferredReturn_ = vt;
+            inferredFromLiteral_ = lit;
+        } else if (!Types::TypeContext::equals(inferredReturn_, vt) && vt &&
+                   !vt->isError() && !inferredReturn_->isError()) {
+            const bool bothInt = inferredReturn_->kind == Types::Kind::Int &&
+                                 vt->kind == Types::Kind::Int;
+            if (inferredFromLiteral_ && !lit) {
+                inferredReturn_ = vt;        // concrete type supersedes a literal
+                inferredFromLiteral_ = false;
+            } else if (bothInt && (!lit || !inferredFromLiteral_)) {
+                if (vt->bitWidth > inferredReturn_->bitWidth) inferredReturn_ = vt;
+            }
+        }
+        return;
+    }
     Types::TypeRef ret = currentReturn_ ? currentReturn_ : types_.voidType();
     if (!node->returnValue) {
         if (!ret->isVoid() && !ret->isError()) {
@@ -641,7 +976,8 @@ void Checker::checkReturn(AST::ReturnStatement* node) {
         return;
     }
     if (vt && ret && !vt->isError() && !ret->isError() &&
-        !isAssignable(ret, vt, lit)) {
+        !isAssignable(ret, vt, lit) &&
+        !isSliceInitializer(ret, vt, node->returnValue)) {
         emit("E2010", "return type mismatch: expected " + types_.toString(ret) +
                           ", got " + types_.toString(vt),
              node, "the value must be assignable to the declared return type");
@@ -692,8 +1028,29 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
     if (!node) return types_.errorType();
     AST::ExprAST* raw = node.get();
     switch (node->nodeType()) {
-        case AST::NodeType::IntegerLiteral:
-            return record(raw, types_.intType(32, true));
+        case AST::NodeType::IntegerLiteral: {
+            // Type the literal by its magnitude so it isn't silently narrowed:
+            // i32 by default (preserving the common case), widening to i64 / u64
+            // / i128 / u128 only when the value does not fit a narrower type.
+            const auto* il = static_cast<const AST::IntegerLiteral*>(raw);
+            const __int128 v = il->value;
+            Types::TypeRef litTy;
+            const __int128 i64Min = -(((__int128)1) << 63);
+            const __int128 i64Max = (((__int128)1) << 63) - 1;
+            const __int128 u64Max = (((__int128)1) << 64) - 1;
+            if (v >= -2147483648 && v <= 2147483647) {
+                litTy = types_.intType(32, true);    // fits in i32 (common case)
+            } else if (v >= i64Min && v <= i64Max) {
+                litTy = types_.intType(64, true);     // fits in signed i64
+            } else if (v >= 0 && v <= u64Max) {
+                litTy = types_.intType(64, false);    // fits in u64
+            } else if (v >= 0) {
+                litTy = types_.intType(128, false);   // needs u128
+            } else {
+                litTy = types_.intType(128, true);    // needs i128
+            }
+            return record(raw, litTy);
+        }
         case AST::NodeType::FloatLiteral:
             return record(raw, types_.floatType(64));
         case AST::NodeType::BoolLiteral:
@@ -723,6 +1080,8 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
             return checkBuiltin(static_cast<AST::BuiltinCallExpr*>(raw));
         case AST::NodeType::CastExpr:
             return checkCast(static_cast<AST::CastExpr*>(raw));
+        case AST::NodeType::Lambda:
+            return checkLambda(static_cast<AST::LambdaExpr*>(raw));
         case AST::NodeType::AddressOfExpr:
             return checkAddressOf(static_cast<AST::AddressOfExpr*>(raw));
         case AST::NodeType::DereferenceExpr:
@@ -731,6 +1090,8 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
             auto* m = static_cast<AST::MemberAccessExpr*>(raw);
             return m->computed ? checkIndex(m) : checkMember(m);
         }
+        case AST::NodeType::SliceExpr:
+            return checkSlice(static_cast<AST::SliceExpr*>(raw));
         case AST::NodeType::AssignmentExpr:
             checkAssignment(static_cast<AST::AssignmentExpr*>(raw));
             return record(raw, types_.voidType());
@@ -753,7 +1114,14 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
         case AST::NodeType::NewExpression: {
             auto* ne = static_cast<AST::NewExpression*>(raw);
             if (ne->initializer) checkExpr(ne->initializer);
-            if (ne->arraySize) checkExpr(ne->arraySize);
+            if (ne->arraySize) {
+                Types::TypeRef countTy = checkExpr(ne->arraySize);
+                if (countTy && !countTy->isError() &&
+                    !(countTy->isInteger() || countTy->kind == Types::Kind::Bool)) {
+                    emit("E2005", "new[] size must be an integer", ne->arraySize.get(),
+                         "use an integer expression for the element count");
+                }
+            }
             for (const auto& a : ne->arguments) checkExpr(a);
             Types::TypeRef inner = resolveTypeSpelling(ne->typeName, raw);
             return record(raw, types_.pointerType(inner));
@@ -832,11 +1200,9 @@ Types::TypeRef Checker::checkBinary(AST::BinaryOperationExpr* node) {
             if (ci.name != a->name) continue;
             auto it = ci.operatorMangled.find(op);
             if (it != ci.operatorMangled.end()) {
-                for (const auto& fn : result_.functions) {
-                    if (fn.mangledName == it->second) {
-                        return record(node, fn.returnType ? fn.returnType
-                                                          : types_.voidType());
-                    }
+                if (const FunctionInfo* fn = findFunctionByMangled(it->second)) {
+                    return record(node, fn->returnType ? fn->returnType
+                                                       : types_.voidType());
                 }
             }
         }
@@ -936,6 +1302,43 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
         }
     }
 
+    // Sum-type variant construction: `E.Variant(args)`. The callee is a member
+    // access whose object names a sum type; the result is a value of that type.
+    if (calleeNode && calleeNode->nodeType() == AST::NodeType::MemberAccess) {
+        const SumVariant* variant = nullptr;
+        const SumTypeInfo* st = asSumVariantAccess(
+            static_cast<AST::MemberAccessExpr*>(calleeNode), &variant);
+        if (st) {
+            if (!variant) {
+                emit("E2018", "'" + name + "' is not a variant of '" + st->name + "'",
+                     node, "");
+                return record(node, types_.errorType());
+            }
+            if (node->arguments.size() != variant->payload.size()) {
+                emit("E2008", "variant '" + st->name + "." + variant->name +
+                                  "' expects " + std::to_string(variant->payload.size()) +
+                                  " field(s), got " +
+                                  std::to_string(node->arguments.size()),
+                     node, "");
+            } else {
+                for (size_t i = 0; i < node->arguments.size(); ++i) {
+                    Types::TypeRef at = checkExpr(node->arguments[i]);
+                    Types::TypeRef pt = variant->payload[i];
+                    bool lit = isIntLiteral(node->arguments[i]);
+                    if (at && pt && !at->isError() && !pt->isError() &&
+                        !isAssignable(pt, at, lit)) {
+                        emit("E2009", "payload " + std::to_string(i + 1) + " of '" +
+                                          st->name + "." + variant->name +
+                                          "' has type " + types_.toString(at) +
+                                          ", expected " + types_.toString(pt),
+                             node->arguments[i].get(), "");
+                    }
+                }
+            }
+            return record(node, types_.namedType(Types::Kind::Struct, st->name));
+        }
+    }
+
     if (name.empty()) {
         if (node->callee) checkExpr(node->callee);
         return record(node, types_.errorType());
@@ -1002,7 +1405,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                     Types::TypeRef pt = paramTypes[i];
                     bool lit = isIntLiteral(node->arguments[i]);
                     if (at && pt && !at->isError() && !pt->isError() &&
-                        !isAssignable(pt, at, lit)) {
+                        !isAssignable(pt, at, lit) &&
+                        !isSliceInitializer(pt, at, node->arguments[i])) {
                         emit("E2009", "argument " + std::to_string(i + 1) + " to '" +
                                           name + "' has type " + types_.toString(at) +
                                           ", expected " + types_.toString(pt),
@@ -1030,6 +1434,7 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                 inst.paramTypes = paramTypes;
                 inst.paramNames = paramNames;
                 inst.returnType = returnType;
+                inst.decl = AST::cloneFunctionDeclaration(*tmpl);
                 result_.genericInstantiations.push_back(std::move(inst));
             }
 
@@ -1063,7 +1468,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                         Types::TypeRef pt = ci.constructorParams[i];
                         bool lit = isIntLiteral(node->arguments[i]);
                         if (at && pt && !at->isError() && !pt->isError() &&
-                            !isAssignable(pt, at, lit)) {
+                            !isAssignable(pt, at, lit) &&
+                            !isSliceInitializer(pt, at, node->arguments[i])) {
                             emit("E2009", "argument " + std::to_string(i + 1) +
                                               " to constructor '" + name +
                                               "' has type " + types_.toString(at) +
@@ -1122,11 +1528,9 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                     if (ci.name == classType->name) {
                         auto it = ci.methodMangled.find(name);
                         if (it != ci.methodMangled.end()) {
-                            for (const auto& fn : result_.functions) {
-                                if (fn.mangledName == it->second) {
-                                    return record(node, fn.returnType ? fn.returnType
-                                                                       : types_.voidType());
-                                }
+                            if (const FunctionInfo* fn = findFunctionByMangled(it->second)) {
+                                return record(node, fn->returnType ? fn->returnType
+                                                                   : types_.voidType());
                             }
                             return record(node, types_.voidType());
                         }
@@ -1143,6 +1547,22 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
         }
     }
 
+    // Calling a function-typed local variable (e.g. a lambda stored in `auto f`):
+    // `f(args)` is an indirect call whose result type is the function's return
+    // type. Arguments were already checked at the top of checkCall.
+    if (calleeNode && calleeNode->nodeType() == AST::NodeType::IdentifierExpr) {
+        Types::TypeRef vt = lookupLocal(name);
+        if (vt && vt->kind == Types::Kind::Function) {
+            if (node->arguments.size() != vt->params.size()) {
+                emit("E2008", "wrong number of arguments to '" + name +
+                                  "': expected " + std::to_string(vt->params.size()) +
+                                  ", got " + std::to_string(node->arguments.size()),
+                     node, "");
+            }
+            return record(node, vt->returnType ? vt->returnType : types_.voidType());
+        }
+    }
+
     auto range = functionTable_.equal_range(name);
     if (range.first == range.second) {
         if (!alreadyErrored(node)) {
@@ -1153,7 +1573,38 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
         return record(node, types_.errorType());
     }
 
-    const FunctionInfo* fn = range.first->second;
+    const FunctionInfo* fn = &range.first->second;
+
+    // Disambiguate overloaded names by owning module. Free functions mangle as
+    // `<module>_<func>`, so we can prefer the candidate that belongs to the most
+    // specific module:
+    //   - For `qualifier.func(...)` (member-access callee, e.g. windows.print),
+    //     prefer the function from module `qualifier`.
+    //   - For a bare `func(...)` call, prefer the function from the module being
+    //     analyzed (so a module's internal calls bind to its own functions even
+    //     when an imported module exports the same name, e.g. std::io.print vs
+    //     windows::io.print).
+    {
+        std::string preferModule;
+        if (calleeNode && calleeNode->nodeType() == AST::NodeType::MemberAccess) {
+            auto* m = static_cast<AST::MemberAccessExpr*>(calleeNode);
+            if (m->object && m->object->nodeType() == AST::NodeType::IdentifierExpr) {
+                preferModule = static_cast<AST::IdentifierExpr*>(m->object.get())->name;
+            }
+        } else if (calleeNode &&
+                   calleeNode->nodeType() == AST::NodeType::IdentifierExpr) {
+            preferModule = result_.moduleName;
+        }
+        if (!preferModule.empty()) {
+            const std::string wanted = preferModule + "_" + name;
+            for (auto cand = range.first; cand != range.second; ++cand) {
+                if (cand->second.mangledName == wanted) {
+                    fn = &cand->second;
+                    break;
+                }
+            }
+        }
+    }
 
     if (node->arguments.size() != fn->paramTypes.size()) {
         emit("E2008", "wrong number of arguments to '" + name + "': expected " +
@@ -1167,7 +1618,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
             Types::TypeRef pt = fn->paramTypes[i];
             bool lit = isIntLiteral(node->arguments[i]);
             if (at && pt && !at->isError() && !pt->isError() &&
-                !isAssignable(pt, at, lit)) {
+                !isAssignable(pt, at, lit) &&
+                !isSliceInitializer(pt, at, node->arguments[i])) {
                 emit("E2009", "argument " + std::to_string(i + 1) + " to '" + name +
                                   "' has type " + types_.toString(at) + ", expected " +
                                   types_.toString(pt),
@@ -1180,6 +1632,15 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
         emit("E2013", "calling unsafe function '" + name + "' outside an unsafe context",
              node, "wrap the call in `unsafe { ... }` or mark the caller unsafe(on)");
     }
+
+    // Record the resolved symbol so the backend can lower the call to the exact
+    // function sema picked. This is essential for module-qualified calls (e.g.
+    // `io.print(...)`) whose MemberAccess callee the selector cannot resolve on
+    // its own, and for disambiguating same-named functions from different
+    // modules (the selector's fallback would otherwise pick the first match by
+    // source name).
+    result_.callTargets[node] =
+        fn->mangledName.empty() ? fn->name : fn->mangledName;
 
     return record(node, fn->returnType ? fn->returnType : types_.voidType());
 }
@@ -1235,25 +1696,14 @@ bool Checker::checkIntrinsicCall(AST::FunctionCallExpr* node, const std::string&
         out = node->genericArgs.empty() ? types_.voidType() : genericType();
         return true;
     }
-    if (name == "sizeof") {
-        if (node->genericArgs.empty()) {
-            emit("E2015", "sizeof requires a type argument: sizeof<T>()", node,
-                 "write the measured type as a generic argument, e.g. sizeof<u64>()");
-        } else {
-            Types::TypeRef measured = resolveTypeSpelling(node->genericArgs.front(), node);
-            if (!measured || measured->isError()) {
-                emit("E2015", "sizeof type argument is not a known type", node, "");
-            }
-        }
-        out = types_.intType(64, false);
-        return true;
-    }
     return false;
 }
 
 Types::TypeRef Checker::checkBuiltin(AST::BuiltinCallExpr* node) {
     if (!node) return types_.errorType();
-    for (const auto& arg : node->arguments) checkExpr(arg);
+    std::vector<Types::TypeRef> argTypes;
+    argTypes.reserve(node->arguments.size());
+    for (const auto& arg : node->arguments) argTypes.push_back(checkExpr(arg));
 
     Builtins::Builtin id = Builtins::lookup(node->name);
     if (id == Builtins::Builtin::Unknown) {
@@ -1273,14 +1723,20 @@ Types::TypeRef Checker::checkBuiltin(AST::BuiltinCallExpr* node) {
              "wrap this in `unsafe { ... }` or mark the function unsafe(on)");
     }
     switch (id) {
-        case Builtins::Builtin::Strlen:
-        case Builtins::Builtin::Sizeof:
-        case Builtins::Builtin::Alignof:
-        case Builtins::Builtin::PtrToInt:
+        case Builtins::Builtin::Hash: {
+            // @hash(s): 64-bit hash of a NUL-terminated `text` (or byte pointer).
+            // A string-literal argument is folded at compile time in the backend.
+            if (!argTypes.empty()) {
+                Types::TypeRef at = argTypes.front();
+                if (at && !at->isError() && !at->isPointerLike()) {
+                    emit("E2016", "@hash requires a text or pointer argument", node,
+                         "pass a `text` value or a byte pointer");
+                }
+            }
             return record(node, types_.intType(64, false));
+        }
         case Builtins::Builtin::Malloc:
         case Builtins::Builtin::Realloc:
-        case Builtins::Builtin::IntToPtr:
             return record(node, types_.pointerType(types_.intType(8, false)));
         case Builtins::Builtin::Utf16:
             if (node->arguments.empty() ||
@@ -1308,7 +1764,7 @@ Types::TypeRef Checker::checkCast(AST::CastExpr* node) {
 
     auto isPtrish = [](Types::TypeRef t) {
         return t && (t->kind == Types::Kind::Pointer || t->kind == Types::Kind::Text ||
-                     t->kind == Types::Kind::Slice);
+                     t->kind == Types::Kind::Function);
     };
     bool reinterpreting = isPtrish(from) || isPtrish(to);
     if (reinterpreting && !inUnsafe_) {
@@ -1316,6 +1772,77 @@ Types::TypeRef Checker::checkCast(AST::CastExpr* node) {
              "pointer casts must be inside `unsafe { ... }` or an unsafe(on) function");
     }
     return record(node, to);
+}
+
+Types::TypeRef Checker::checkLambda(AST::LambdaExpr* node) {
+    if (!node || !node->function) return record(node, types_.errorType());
+    AST::FunctionDeclaration* fn = node->function.get();
+
+    std::vector<Types::TypeRef> paramTypes;
+    paramTypes.reserve(fn->parameters.size());
+    for (const auto& p : fn->parameters) {
+        paramTypes.push_back(resolveTypeSpelling(p.type, node));
+    }
+
+    // Check the body in an ISOLATED scope so the lambda cannot capture the
+    // enclosing function's locals (non-capturing lambdas only), and infer the
+    // return type from its `return` statements.
+    std::vector<Scope> savedScopes = std::move(scopes_);
+    scopes_.clear();
+    const FunctionInfo* savedFn = currentFn_;
+    Types::TypeRef savedReturn = currentReturn_;
+    bool savedInfer = inferReturn_;
+    Types::TypeRef savedInferred = inferredReturn_;
+    bool savedInferredLit = inferredFromLiteral_;
+    bool savedUnsafe = inUnsafe_;
+
+    currentFn_ = nullptr;
+    currentReturn_ = nullptr;
+    inferReturn_ = true;
+    inferredReturn_ = nullptr;
+    inferredFromLiteral_ = false;
+    inUnsafe_ = false;
+
+    pushScope();
+    for (size_t i = 0; i < fn->parameters.size(); ++i) {
+        declareLocal(fn->parameters[i].name, paramTypes[i], node);
+    }
+    checkBlock(fn->body);
+    popScope();
+
+    Types::TypeRef ret = inferredReturn_ ? inferredReturn_ : types_.voidType();
+
+    scopes_ = std::move(savedScopes);
+    currentFn_ = savedFn;
+    currentReturn_ = savedReturn;
+    inferReturn_ = savedInfer;
+    inferredReturn_ = savedInferred;
+    inferredFromLiteral_ = savedInferredLit;
+    inUnsafe_ = savedUnsafe;
+
+    // Concrete return spelling + register the lifted function so it is emitted
+    // (exactly once) alongside the module's own functions.
+    fn->returnType = types_.toString(ret);
+    bool isExtern = false;
+    std::string mangled = computeMangledName(fn, isExtern);
+    bool present = false;
+    for (const auto& f : result_.functions) {
+        if (f.mangledName == mangled) { present = true; break; }
+    }
+    if (!present) {
+        FunctionInfo info;
+        info.name = fn->name;
+        info.mangledName = mangled;
+        info.decl = fn;
+        info.returnType = ret;
+        for (size_t i = 0; i < fn->parameters.size(); ++i) {
+            info.paramNames.push_back(fn->parameters[i].name);
+            info.paramTypes.push_back(paramTypes[i]);
+        }
+        result_.functions.push_back(std::move(info));
+    }
+
+    return record(node, types_.functionType(paramTypes, ret));
 }
 
 Types::TypeRef Checker::checkAddressOf(AST::AddressOfExpr* node) {
@@ -1336,8 +1863,7 @@ Types::TypeRef Checker::checkDeref(AST::DereferenceExpr* node) {
              "wrap this in `unsafe { ... }` or mark the function unsafe(on)");
     }
     if (t && !t->isError()) {
-        if (t->kind == Types::Kind::Pointer || t->kind == Types::Kind::Text ||
-            t->kind == Types::Kind::Slice) {
+        if (t->kind == Types::Kind::Pointer || t->kind == Types::Kind::Text) {
             Types::TypeRef elem = t->element ? t->element : types_.intType(8, false);
             return record(node, elem);
         }
@@ -1348,14 +1874,122 @@ Types::TypeRef Checker::checkDeref(AST::DereferenceExpr* node) {
 
 Types::TypeRef Checker::checkMember(AST::MemberAccessExpr* node) {
     if (!node) return types_.errorType();
-    Types::TypeRef objType = node->object ? checkExpr(node->object) : types_.errorType();
 
     std::string member;
     if (node->property && node->property->nodeType() == AST::NodeType::IdentifierExpr) {
         member = static_cast<AST::IdentifierExpr*>(node->property.get())->name;
     }
+
+    // `SomeType.insize` / `SomeType.inalign`: the byte size or the alignment of a
+    // type named directly, e.g. `i64.insize`, `Point.inalign`, or `T.insize` inside
+    // a generic. Answered first, before the object is treated as a value or as a
+    // sum-type name: a type name is not a value and would fail name resolution, and
+    // for a sum type `Sum.insize` would otherwise be read as a variant that does
+    // not exist.
+    //
+    // A variable of the same name takes precedence, so the value form below still
+    // applies and no existing identifier changes meaning.
+    const bool wantSize = (member == "insize");
+    const bool wantAlign = (member == "inalign");
+    if ((wantSize || wantAlign) && node->object && !node->computed &&
+        node->object->nodeType() == AST::NodeType::IdentifierExpr) {
+        const std::string& spelling =
+            static_cast<AST::IdentifierExpr&>(*node->object).name;
+        if (!lookupLocal(spelling)) {
+            // Resolve quietly: an unknown name here is not necessarily an error,
+            // it may be the value form handled further down.
+            Types::TypeRef measured;
+            auto subst = currentSubst_.find(spelling);
+            if (subst != currentSubst_.end()) {
+                measured = subst->second;  // generic parameter, monomorphized
+            } else {
+                measured = types_.fromString(spelling);
+            }
+            if (measured && !measured->isError()) {
+                if (measured->kind == Types::Kind::Generic) {
+                    // An unsubstituted type parameter has no size yet. Only
+                    // reachable outside any instantiation, so say so plainly
+                    // rather than reporting a bogus number.
+                    emit("E2015",
+                         "'" + spelling +
+                             "' is an unsubstituted generic parameter; its size is "
+                             "only known once instantiated",
+                         node, "");
+                    return record(node, types_.errorType());
+                }
+                if (wantSize) {
+                    result_.insizeTypes[node] = measured;
+                } else {
+                    result_.inalignTypes[node] = measured;
+                }
+                return record(node, types_.intType(64, false));
+            }
+        }
+    }
+
+    // `E.Variant` where E is a sum type and the variant carries no payload: a
+    // nullary variant value. (Payload variants are built via `E.Variant(...)`,
+    // handled in checkCall.)
+    {
+        const SumVariant* variant = nullptr;
+        const SumTypeInfo* st = asSumVariantAccess(node, &variant);
+        if (st) {
+            if (variant && variant->payload.empty()) {
+                return record(node, types_.namedType(Types::Kind::Struct, st->name));
+            }
+            if (variant) {
+                emit("E2018", "variant '" + st->name + "." + variant->name +
+                                  "' carries a payload; construct it with arguments",
+                     node, "e.g. " + st->name + "." + variant->name + "(...)");
+                return record(node, types_.namedType(Types::Kind::Struct, st->name));
+            }
+            emit("E2018", "'" + st->name + "' has no such variant", node, "");
+            return record(node, types_.errorType());
+        }
+    }
+
+    Types::TypeRef objType = node->object ? checkExpr(node->object) : types_.errorType();
+
+    // `value.insize`: the size of the value's own type. Deliberately answered
+    // before the pointer auto-deref below, so a pointer reports the size of the
+    // pointer (8) rather than of what it points at -- auto-deref exists so field
+    // access can reach through a pointer, and these are not fields. A struct that
+    // really declares such a field keeps it.
+    if ((wantSize || wantAlign) && objType && !objType->isError() &&
+        !node->computed) {
+        bool shadowedByField = false;
+        if (objType->kind == Types::Kind::Struct ||
+            objType->kind == Types::Kind::Class) {
+            for (const auto& s : result_.structs) {
+                if (s.name != objType->name) continue;
+                for (const auto& f : s.fields) {
+                    if (f.first == member) shadowedByField = true;
+                }
+            }
+        }
+        if (!shadowedByField) {
+            if (wantSize) {
+                result_.insizeTypes[node] = objType;
+            } else {
+                result_.inalignTypes[node] = objType;
+            }
+            return record(node, types_.intType(64, false));
+        }
+    }
+
     if (objType && objType->kind == Types::Kind::Pointer && objType->element) {
         objType = objType->element;
+    }
+    if (objType && objType->kind == Types::Kind::Slice) {
+        if (member == "ptr") {
+            return record(node, types_.pointerType(objType->element));
+        }
+        if (member == "len") {
+            return record(node, types_.intType(64, true));
+        }
+        emit("E2007", "slice has no member '" + member + "'", node,
+             "available members are `.ptr` and `.len`");
+        return record(node, types_.errorType());
     }
     if (objType && (objType->kind == Types::Kind::Struct ||
                     objType->kind == Types::Kind::Class)) {
@@ -1387,10 +2021,57 @@ Types::TypeRef Checker::checkIndex(AST::MemberAccessExpr* node) {
         if (base->kind == Types::Kind::Text) {
             return record(node, types_.intType(8, false));
         }
+        if (base->kind == Types::Kind::Slice && base->element) {
+            return record(node, base->element);
+        }
         if (base->element) {
             return record(node, base->element);
         }
     }
+    return record(node, types_.errorType());
+}
+
+Types::TypeRef Checker::checkSlice(AST::SliceExpr* node) {
+    if (!node) return types_.errorType();
+    Types::TypeRef base = node->object ? checkExpr(node->object) : types_.errorType();
+
+    auto checkBound = [&](const AST::NodePtr& b) {
+        if (!b) return;
+        Types::TypeRef t = checkExpr(b);
+        if (t && !t->isError() && !t->isInteger()) {
+            emit("E2015", "slice bound must be an integer", b.get(),
+                 "got " + types_.toString(t));
+        }
+    };
+    checkBound(node->start);
+    checkBound(node->end);
+
+    if (!base || base->isError()) return record(node, types_.errorType());
+
+    // The result is a slice over the source's element type. A slice or fixed
+    // array slices to a slice of the same element; `text` slices to bytes (u8).
+    if (base->kind == Types::Kind::Slice || base->kind == Types::Kind::Array) {
+        return record(node, types_.sliceType(base->element));
+    }
+    if (base->kind == Types::Kind::Text) {
+        return record(node, types_.sliceType(types_.intType(8, false)));
+    }
+    // A raw pointer has no length, so an open upper bound is unknowable; require
+    // an explicit end and an unsafe context (the caller vouches for the range).
+    if (base->kind == Types::Kind::Pointer) {
+        if (!node->end) {
+            emit("E2015", "cannot slice a raw pointer without an explicit end bound",
+                 node, "write ptr[start..end]; a pointer carries no length");
+        }
+        if (!inUnsafe_) {
+            emit("E2013", "slicing a raw pointer requires an unsafe context", node,
+                 "wrap this in `unsafe { ... }` (a pointer range is unchecked)");
+        }
+        return record(node, types_.sliceType(base->element));
+    }
+
+    emit("E2015", "cannot slice a value of type " + types_.toString(base), node,
+         "only slices, arrays, text, and (unsafe) pointers can be sliced");
     return record(node, types_.errorType());
 }
 
@@ -1436,3 +2117,5 @@ void Checker::checkInterpolation(AST::StringLiteral* node) {
 }
 
 }
+
+

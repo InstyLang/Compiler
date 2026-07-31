@@ -1,0 +1,201 @@
+// Insty standard library: std::syscall
+//
+// Raw kernel syscalls, issued with an inline `asm` block. The register convention
+// is written down here, in one file, and nowhere else in the library repeats it --
+// which matters because a wrong register produces code that assembles and tests
+// clean, then misbehaves only on real hardware.
+//
+// Conventions (the `syscall` instruction, result in rax):
+//
+//   Linux     rax = number, then rdi, rsi, rdx, r10, r8, r9
+//   InstantOS rax = number, then rbx, r10, rdx, r8, r9   (5 arguments maximum)
+//
+// `syscall` itself destroys rcx and r11. Those need no mention: a block is
+// assumed to clobber every caller-saved register, so the two are already covered.
+//
+// A return in [-4095, -1] is a negated errno on both systems.
+//
+// Not available on wasm or in freestanding mode: a wasm module reaches its host
+// through imports, not a trap instruction, and `asm` has no meaning there. Call
+// these only from a branch guarded by `#if`.
+//
+// Usage:
+//     import std::syscall
+//     syscall.sys3(1, 1, cast<i64>(msg), len)   // Linux write(1, msg, len)
+
+module syscall
+
+export fun sys0(i64 n) -> i64 {
+    i64 out = 0
+    unsafe {
+        asm [keep(rax)](
+            mov rax, $n
+            syscall
+            mov $out, rax
+        )
+    }
+    return out
+}
+
+export fun sys1(i64 n, i64 a1) -> i64 {
+    i64 out = 0
+    #if @targetIs("instantos") {
+        unsafe {
+            asm [keep(rax), keep(rbx)](
+                mov rax, $n
+                mov rbx, $a1
+                syscall
+                mov $out, rax
+            )
+        }
+    } #else {
+        unsafe {
+            asm [keep(rax), keep(rdi)](
+                mov rax, $n
+                mov rdi, $a1
+                syscall
+                mov $out, rax
+            )
+        }
+    }
+    return out
+}
+
+export fun sys2(i64 n, i64 a1, i64 a2) -> i64 {
+    i64 out = 0
+    #if @targetIs("instantos") {
+        unsafe {
+            asm [keep(rax), keep(rbx), keep(r10)](
+                mov rax, $n
+                mov rbx, $a1
+                mov r10, $a2
+                syscall
+                mov $out, rax
+            )
+        }
+    } #else {
+        unsafe {
+            asm [keep(rax), keep(rdi), keep(rsi)](
+                mov rax, $n
+                mov rdi, $a1
+                mov rsi, $a2
+                syscall
+                mov $out, rax
+            )
+        }
+    }
+    return out
+}
+
+export fun sys3(i64 n, i64 a1, i64 a2, i64 a3) -> i64 {
+    i64 out = 0
+    #if @targetIs("instantos") {
+        unsafe {
+            asm [keep(rax), keep(rbx), keep(r10), keep(rdx)](
+                mov rax, $n
+                mov rbx, $a1
+                mov r10, $a2
+                mov rdx, $a3
+                syscall
+                mov $out, rax
+            )
+        }
+    } #else {
+        unsafe {
+            asm [keep(rax), keep(rdi), keep(rsi), keep(rdx)](
+                mov rax, $n
+                mov rdi, $a1
+                mov rsi, $a2
+                mov rdx, $a3
+                syscall
+                mov $out, rax
+            )
+        }
+    }
+    return out
+}
+
+export fun sys4(i64 n, i64 a1, i64 a2, i64 a3, i64 a4) -> i64 {
+    i64 out = 0
+    #if @targetIs("instantos") {
+        unsafe {
+            asm [keep(rax), keep(rbx), keep(r10), keep(rdx), keep(r8)](
+                mov rax, $n
+                mov rbx, $a1
+                mov r10, $a2
+                mov rdx, $a3
+                mov r8, $a4
+                syscall
+                mov $out, rax
+            )
+        }
+    } #else {
+        unsafe {
+            asm [keep(rax), keep(rdi), keep(rsi), keep(rdx), keep(r10)](
+                mov rax, $n
+                mov rdi, $a1
+                mov rsi, $a2
+                mov rdx, $a3
+                mov r10, $a4
+                syscall
+                mov $out, rax
+            )
+        }
+    }
+    return out
+}
+
+export fun sys5(i64 n, i64 a1, i64 a2, i64 a3, i64 a4, i64 a5) -> i64 {
+    i64 out = 0
+    #if @targetIs("instantos") {
+        unsafe {
+            asm [keep(rax), keep(rbx), keep(r10), keep(rdx), keep(r8), keep(r9)](
+                mov rax, $n
+                mov rbx, $a1
+                mov r10, $a2
+                mov rdx, $a3
+                mov r8, $a4
+                mov r9, $a5
+                syscall
+                mov $out, rax
+            )
+        }
+    } #else {
+        unsafe {
+            asm [keep(rax), keep(rdi), keep(rsi), keep(rdx), keep(r10), keep(r8)](
+                mov rax, $n
+                mov rdi, $a1
+                mov rsi, $a2
+                mov rdx, $a3
+                mov r10, $a4
+                mov r8, $a5
+                syscall
+                mov $out, rax
+            )
+        }
+    }
+    return out
+}
+
+// Six arguments exist only on Linux: the InstantOS convention has no register for
+// a sixth. Declared only where it is real, so calling it on InstantOS is an
+// unknown-function error rather than a call that quietly uses the wrong registers.
+#if !@targetIs("instantos") {
+    export fun sys6(i64 n, i64 a1, i64 a2, i64 a3, i64 a4, i64 a5, i64 a6) -> i64 {
+        i64 out = 0
+        unsafe {
+            asm [keep(rax), keep(rdi), keep(rsi), keep(rdx), keep(r10), keep(r8), keep(r9)](
+                mov rax, $n
+                mov rdi, $a1
+                mov rsi, $a2
+                mov rdx, $a3
+                mov r10, $a4
+                mov r8, $a5
+                mov r9, $a6
+                syscall
+                mov $out, rax
+            )
+        }
+        return out
+    }
+}

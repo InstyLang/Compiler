@@ -1,0 +1,248 @@
+// Insty standard library: fs
+//
+// Portable filesystem access with no libc on any target: open a file, read/write
+// bytes, close it, and read a whole file into a growable String.
+//
+//   linux    raw syscalls (read=0, write=1, open=2, close=3)
+//   wasm     WASI preview1 path_open / fd_read / fd_write / fd_close
+//   windows  CreateFileA / ReadFile / WriteFile / CloseHandle
+//
+// Each primitive selects its implementation with a compile-time `#if`, so only
+// the branch matching the target is analyzed or compiled.
+//
+// A note on wasm: WASI is capability based, so a module cannot name an arbitrary
+// path. The host has to grant a directory up front (`wasmtime run --dir .`),
+// which arrives as a preopened descriptor, and paths resolve relative to it.
+// Absolute paths do not work there.
+//
+// `read_file` requires a heap allocator because it returns an owned String.
+
+module fs
+
+// Kernel entry: the register convention lives in std::syscall, not here.
+import std::syscall
+
+import std::string
+
+// --- platform entry points -------------------------------------------------
+// Declared unconditionally; an extern only becomes an import if it is called,
+// and every call sits in a branch that other targets discard.
+
+extern fun [dll("wasi_snapshot_preview1")] path_open(
+    i32 fd, i32 dirflags, u8* path, i32 path_len, i32 oflags,
+    u64 rights_base, u64 rights_inheriting, i32 fdflags, i32* opened_fd) -> i32
+extern fun [dll("wasi_snapshot_preview1")] fd_read(
+    i32 fd, u8* iovs, i32 iovs_len, u32* nread) -> i32
+extern fun [dll("wasi_snapshot_preview1")] fd_write(
+    i32 fd, u8* iovs, i32 iovs_len, u32* nwritten) -> i32
+extern fun [dll("wasi_snapshot_preview1")] fd_close(i32 fd) -> i32
+
+extern fun [dll("kernel32.dll")] CreateFileA(
+    text name, u32 access, u32 share, void* security,
+    u32 disposition, u32 flags, u64 templateFile) -> u64
+extern fun [dll("kernel32.dll")] ReadFile(
+    u64 handle, void* buffer, u32 count, u32* read, void* overlapped) -> bool
+extern fun [dll("kernel32.dll")] WriteFile(
+    u64 handle, void* buffer, u32 count, u32* written, void* overlapped) -> bool
+extern fun [dll("kernel32.dll")] CloseHandle(u64 handle) -> bool
+
+// WASI's scatter/gather buffer descriptor: two 32-bit fields on wasm32.
+struct Ciovec {
+    u32 buf,
+    u32 buf_len
+}
+
+// --- flags -----------------------------------------------------------------
+// Spelled as open(2) values on every target; the wasm branch translates them.
+
+export fun o_rdonly() -> i64 { return 0 }
+export fun o_wronly() -> i64 { return 1 }
+export fun o_rdwr() -> i64 { return 2 }
+// O_CREAT | O_WRONLY | O_TRUNC == 0x241 (create/truncate for writing).
+export fun o_create_write() -> i64 { return 577 }
+
+// --- primitives ------------------------------------------------------------
+
+// Open `path` with `flags` (mode 0644 when creating). Returns a descriptor, or a
+// negative value on failure.
+export fun open(text path, i64 flags) -> i64 {
+    #if @targetIs("wasm") {
+        unsafe {
+            // Translate the open(2) bits this module exposes into WASI oflags:
+            // O_CREAT (0x40) -> 1, O_TRUNC (0x200) -> 8.
+            i32 oflags = 0
+            if (flags & 64) != 0 {
+                oflags = oflags | 1
+            }
+            if (flags & 512) != 0 {
+                oflags = oflags | 8
+            }
+            // Descriptor 3 is the first directory the host preopened.
+            i32 fd = 0
+            i32 rc = path_open(3, 0, cast<u8*>(path), cast<i32>(str.len(path)),
+                               oflags, 0x0FFFFFFF, 0x0FFFFFFF, 0, &fd)
+            if rc != 0 {
+                return 0 - cast<i64>(rc)
+            }
+            return cast<i64>(fd)
+        }
+    } #else if @targetIs("windows") {
+        unsafe {
+            u32 access = 0x80000000            // GENERIC_READ
+            u32 disposition = 3                // OPEN_EXISTING
+            if (flags & 577) != 0 {
+                access = 0x40000000            // GENERIC_WRITE
+                disposition = 2                // CREATE_ALWAYS
+            }
+            u64 handle = CreateFileA(path, access, 1, cast<void*>(0),
+                                     disposition, 128, 0)
+            // INVALID_HANDLE_VALUE is (HANDLE)-1.
+            if handle == 0xFFFFFFFFFFFFFFFF {
+                return 0 - 1
+            }
+            return cast<i64>(handle)
+        }
+    } #else {
+        unsafe {
+            return syscall.sys3(2, cast<i64>(path), flags, 420)
+        }
+    }
+}
+
+// Open an existing file for reading. Negative on failure.
+export fun open_read(text path) -> i64 {
+    return open(path, o_rdonly())
+}
+
+// Create (or truncate) a file for writing. Negative on failure.
+export fun create_write(text path) -> i64 {
+    return open(path, o_create_write())
+}
+
+// Read up to `count` bytes into `buf`. Returns the byte count (0 at end of file)
+// or a negative value.
+export fun read(i64 fd, u8* buf, i64 count) -> i64 {
+    #if @targetIs("wasm") {
+        unsafe {
+            Ciovec iov
+            iov.buf = cast<u32>(cast<u64>(buf))
+            iov.buf_len = cast<u32>(count)
+            u32 got = 0
+            i32 rc = fd_read(cast<i32>(fd), cast<u8*>(&iov), 1, &got)
+            if rc != 0 {
+                return 0 - cast<i64>(rc)
+            }
+            return cast<i64>(got)
+        }
+    } #else if @targetIs("windows") {
+        unsafe {
+            u32 got = 0
+            bool ok = ReadFile(cast<u64>(fd), cast<void*>(buf), cast<u32>(count),
+                               &got, cast<void*>(0))
+            if !ok {
+                return 0 - 1
+            }
+            return cast<i64>(got)
+        }
+    } #else {
+        unsafe {
+            return syscall.sys3(0, fd, cast<i64>(buf), count)
+        }
+    }
+}
+
+// Write `count` bytes from `buf`. Returns the byte count written, or negative.
+export fun write(i64 fd, u8* buf, i64 count) -> i64 {
+    #if @targetIs("wasm") {
+        unsafe {
+            Ciovec iov
+            iov.buf = cast<u32>(cast<u64>(buf))
+            iov.buf_len = cast<u32>(count)
+            u32 put = 0
+            i32 rc = fd_write(cast<i32>(fd), cast<u8*>(&iov), 1, &put)
+            if rc != 0 {
+                return 0 - cast<i64>(rc)
+            }
+            return cast<i64>(put)
+        }
+    } #else if @targetIs("windows") {
+        unsafe {
+            u32 put = 0
+            bool ok = WriteFile(cast<u64>(fd), cast<void*>(buf), cast<u32>(count),
+                                &put, cast<void*>(0))
+            if !ok {
+                return 0 - 1
+            }
+            return cast<i64>(put)
+        }
+    } #else {
+        unsafe {
+            return syscall.sys3(1, fd, cast<i64>(buf), count)
+        }
+    }
+}
+
+export fun close(i64 fd) -> i64 {
+    #if @targetIs("wasm") {
+        return cast<i64>(fd_close(cast<i32>(fd)))
+    } #else if @targetIs("windows") {
+        unsafe {
+            CloseHandle(cast<u64>(fd))
+        }
+        return 0
+    } #else {
+        unsafe {
+            return syscall.sys1(3, fd)
+        }
+    }
+}
+
+// --- convenience -----------------------------------------------------------
+
+// Read the entire file at `path` into a String. Returns an empty String on any
+// open error (check separately if you must distinguish empty files from errors).
+export fun read_file(text path) -> String {
+    String out = String()
+    i64 fd = open_read(path)
+    if fd < 0 {
+        return out
+    }
+    u8[4096] buf
+    unsafe {
+        u8* p = cast<u8*>(&buf)
+        loop {
+            i64 n = read(fd, p, 4096)
+            if n <= 0 {
+                break
+            }
+            out.append_bytes(p, n)
+        }
+    }
+    close(fd)
+    return out
+}
+
+// Write all bytes of `contents` to `path` (created/truncated). Returns true on
+// success.
+export fun write_file(text path, u8[] contents) -> bool {
+    i64 fd = create_write(path)
+    if fd < 0 {
+        return false
+    }
+    bool ok = true
+    unsafe {
+        i64 total = 0
+        while total < contents.len {
+            i64 n = write(fd, contents.ptr + total, contents.len - total)
+            if n <= 0 {
+                ok = false
+                break
+            }
+            total = total + n
+        }
+    }
+    close(fd)
+    return ok
+}
+
+

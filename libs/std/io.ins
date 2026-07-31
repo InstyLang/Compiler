@@ -1,0 +1,143 @@
+// Insty standard library: io
+//
+// Portable console input/output. No libc on any target: bytes go straight to the
+// operating system.
+//
+//   linux    write(2) via a raw syscall
+//   wasm     WASI preview1 fd_write
+//   windows  WriteFile against the standard handles
+//
+// The platform is chosen once, in write_bytes below, with a compile-time `#if`.
+// Only the branch matching the target is analyzed or compiled, which is what lets
+// a raw syscall and a WASI import coexist in one file -- neither is even
+// type-checked on a target that cannot express it.
+//
+// fd 1 = stdout, fd 2 = stderr
+
+module io
+
+import std::str
+
+// Kernel entry: the register convention lives in std::syscall, not here.
+import std::syscall
+
+// Platform entry points. Declaring these unconditionally is harmless: an extern
+// only becomes an import if something actually calls it, and the calls live in
+// branches that are discarded on every other target.
+extern fun [dll("wasi_snapshot_preview1")] fd_write(
+    i32 fd, u8* iovs, i32 iovs_len, u32* nwritten) -> i32
+
+extern fun [dll("kernel32.dll")] GetStdHandle(i32 nStdHandle) -> u64
+extern fun [dll("kernel32.dll")] WriteFile(
+    u64 hFile, void* buffer, u32 count, u32* written, void* overlapped) -> bool
+
+// WASI's scatter/gather buffer descriptor: two 32-bit fields on wasm32.
+struct Ciovec {
+    u32 buf,
+    u32 buf_len
+}
+
+// The one place the platform is selected. Everything below goes through it.
+fun write_bytes(i64 fd, u8* ptr, i64 len) -> void {
+    #if @targetIs("wasm") {
+        unsafe {
+            Ciovec iov
+            iov.buf = cast<u32>(cast<u64>(ptr))
+            iov.buf_len = cast<u32>(len)
+            u32 written = 0
+            fd_write(cast<i32>(fd), cast<u8*>(&iov), 1, &written)
+        }
+    } #else if @targetIs("windows") {
+        unsafe {
+            // STD_OUTPUT_HANDLE is -11 and STD_ERROR_HANDLE is -12.
+            i32 which = 0 - 11
+            if fd == 2 {
+                which = 0 - 12
+            }
+            u64 handle = GetStdHandle(which)
+            u32 written = 0
+            WriteFile(handle, cast<void*>(ptr), cast<u32>(len), &written,
+                      cast<void*>(0))
+        }
+    } #else {
+        unsafe {
+            syscall.sys3(1, fd, cast<i64>(ptr), len)
+        }
+    }
+}
+
+// Write a string to stdout without a trailing newline.
+export fun print(text s) -> void {
+    unsafe {
+        write_bytes(1, cast<u8*>(s), cast<i64>(str.len(s)))
+    }
+}
+
+// Write a string to stdout followed by a newline.
+export fun println(text s) -> void {
+    print(s)
+    print("\n")
+}
+
+// Write a string to stderr without a trailing newline.
+export fun eprint(text s) -> void {
+    unsafe {
+        write_bytes(2, cast<u8*>(s), cast<i64>(str.len(s)))
+    }
+}
+
+// Write a string to stderr followed by a newline.
+export fun eprintln(text s) -> void {
+    eprint(s)
+    eprint("\n")
+}
+
+// Internal: format n as decimal and write it to the given descriptor. Digits are
+// built back to front in a stack buffer, so no allocation is involved.
+fun write_int_fd(i64 fd, i64 n) -> void {
+    u8[32] buf
+    unsafe {
+        u8* p = cast<u8*>(&buf)
+        i64 i = 31
+        i64 v = n
+        bool neg = false
+        if v < 0 {
+            neg = true
+            v = 0 - v
+        }
+        if v == 0 {
+            p[i] = 48
+            i = i - 1
+        }
+        while v > 0 {
+            p[i] = cast<u8>(48 + (v - (v / 10) * 10))
+            v = v / 10
+            i = i - 1
+        }
+        if neg {
+            p[i] = 45
+            i = i - 1
+        }
+        i64 start = i + 1
+        write_bytes(fd, cast<u8*>(cast<u64>(p) + cast<u64>(start)), 32 - start)
+    }
+}
+
+// Write a signed integer to stdout without a trailing newline.
+export fun print_int(i64 n) -> void {
+    write_int_fd(1, n)
+}
+
+// Write a signed integer to stdout followed by a newline.
+export fun println_int(i64 n) -> void {
+    write_int_fd(1, n)
+    print("\n")
+}
+
+// Write a signed integer to stderr followed by a newline.
+export fun eprintln_int(i64 n) -> void {
+    write_int_fd(2, n)
+    eprint("\n")
+}
+
+

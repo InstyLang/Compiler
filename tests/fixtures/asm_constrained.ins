@@ -1,0 +1,15 @@
+module test
+
+fun docpuid(i32 leaf) -> i32 {
+  unsafe {
+    // Bind leaf -> rax (input), read result from rbx (output, callee-saved on
+    // purpose to exercise frame save/restore), clobber rcx/rdx.
+    i32 r = asm<i32>("cpuid", "={rbx},{rax},~{rcx},~{rdx}", leaf)
+    return r
+  }
+}
+
+fun main() -> i32 {
+  i32 x = docpuid(0)
+  return x
+}

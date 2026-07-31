@@ -1,0 +1,55 @@
+module main
+
+// StringMap<V>: cross-module generic hash map keyed by text. Exercises
+// put/overwrite, grow (many inserts), get_or (hit + miss), has, get_ptr in-place
+// update, and pointer values. Returns 42.
+
+import std::map
+
+struct Sym { i64 uses }
+
+fun main() -> i32 {
+    StringMap<i64> m = StringMap<i64>()
+    m.put("one", 1)
+    m.put("two", 2)
+    m.put("two", 22)             // overwrite
+    // Force multiple grows.
+    m.put("a", 3)
+    m.put("b", 4)
+    m.put("c", 5)
+    m.put("d", 6)
+    m.put("e", 7)
+    m.put("f", 8)
+    m.put("g", 9)
+    m.put("h", 10)
+
+    i64 total = 0
+    total = total + m.get_or("one", 0)       // 1
+    total = total + m.get_or("two", 0)       // 22
+    total = total + m.get_or("nope", 0)      // 0 (miss)
+    total = total + m.len()                  // 10 distinct keys
+    // 1 + 22 + 0 + 10 = 33
+
+    if m.has("h") {
+        total = total + 1                    // 34
+    }
+    if !m.has("zzz") {
+        total = total + 1                    // 35
+    }
+
+    // Pointer values + in-place update via get_ptr.
+    StringMap<Sym*> syms = StringMap<Sym*>()
+    Sym* s = new Sym
+    unsafe { ~s = Sym{ uses: 0 } }
+    syms.put("x", s)
+    unsafe {
+        Sym** slot = syms.get_ptr("x")
+        if cast<u64>(slot) != 0 {
+            Sym* p = ~slot
+            p.uses = p.uses + 7
+        }
+    }
+    total = total + s.uses                   // + 7 = 42
+
+    return cast<i32>(total)
+}

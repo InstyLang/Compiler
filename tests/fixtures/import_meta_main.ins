@@ -1,0 +1,10 @@
+module main
+
+import import_meta_dep
+
+fun main() -> i32 {
+    Gauge gauge = Gauge(5)
+    Gauge zero = Gauge(0)
+    Mode mode = High
+    return gauge.add(enum_pick(mode)) + (gauge + zero) - 5
+}

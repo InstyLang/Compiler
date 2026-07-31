@@ -1,0 +1,55 @@
+module main
+
+import std::alloc
+
+fun main() -> i32 {
+    Block b = alloc_make(24, 64)
+    if alloc_is_null(b) {
+        return 1
+    }
+    if b.size != 24 {
+        alloc_free(b)
+        return 2
+    }
+    if b.align != 64 {
+        alloc_free(b)
+        return 3
+    }
+
+    unsafe {
+        if cast<u64>(b.ptr) % 64 != 0 {
+            alloc_free(b)
+            return 4
+        }
+    }
+
+    alloc_set_byte(b, 0, 13)
+    alloc_set_byte(b, 23, 17)
+
+    Block c = alloc_resize(b, 48)
+    if alloc_is_null(c) {
+        return 5
+    }
+    if c.size != 48 {
+        alloc_free(c)
+        return 6
+    }
+    if c.align != 64 {
+        alloc_free(c)
+        return 7
+    }
+
+    unsafe {
+        if cast<u64>(c.ptr) % 64 != 0 {
+            alloc_free(c)
+            return 8
+        }
+    }
+
+    alloc_set_byte(c, 47, 12)
+    i32 total = cast<i32>(alloc_byte_at(c, 0))
+    total = total + cast<i32>(alloc_byte_at(c, 23))
+    total = total + cast<i32>(alloc_byte_at(c, 47))
+    alloc_free(c)
+    return total
+}

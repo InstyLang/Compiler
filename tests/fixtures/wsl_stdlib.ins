@@ -1,0 +1,59 @@
+module main
+import std::io
+import std::str
+import std::vec
+import std::map
+import std::string
+import std::fs
+
+fun main() -> i32 {
+    i32 e = 0
+
+    // --- std::str (the @strlen -> str.len migration) -----------------------
+    if str.len("hello") != 5 { e = e + 1  io.println("str.len") }
+    if str.len("") != 0 { e = e + 1  io.println("str.len empty") }
+    if !str.eq("abc", "abc") { e = e + 1  io.println("str.eq") }
+    if str.eq("abc", "abd") { e = e + 1  io.println("str.eq neg") }
+    if !str.starts_with("foobar", "foo") { e = e + 1  io.println("starts_with") }
+    if !str.contains("foobar", "oba") { e = e + 1  io.println("contains") }
+    if str.find("foobar", "bar") != 3 { e = e + 1  io.println("str.find") }
+    if str.index_of("foobar", 98) != 3 { e = e + 1  io.println("index_of byte") }
+    if str.to_i64("-42") != -42 { e = e + 1  io.println("to_i64") }
+
+    // --- std::vec ----------------------------------------------------------
+    Vector<i64> v = Vector<i64>()
+    i64 i = 0
+    while i < 20 { v.push(i * i)  i = i + 1 }
+    if v.len() != 20 { e = e + 1  io.println("vec len") }
+    if v.get(7) != 49 { e = e + 1  io.println("vec get") }
+    if v.pop() != 361 { e = e + 1  io.println("vec pop") }
+
+    // --- std::map ----------------------------------------------------------
+    StringMap<i64> m = StringMap<i64>()
+    m.put("one", 1)  m.put("two", 2)  m.put("three", 3)
+    m.put("two", 22)
+    if m.len() != 3 { e = e + 1  io.println("map len") }
+    if m.get_or("two", -1) != 22 { e = e + 1  io.println("map update") }
+    if m.get_or("three", -1) != 3 { e = e + 1  io.println("map get") }
+    if m.get_or("nope", -1) != -1 { e = e + 1  io.println("map miss") }
+
+    // --- std::string -------------------------------------------------------
+    String s = String()
+    s.append("count=")
+    s.append_int(99)
+    if !s.equals("count=99") { e = e + 1  io.println("String append") }
+    if s.len() != 8 { e = e + 1  io.println("String len") }
+
+    // --- std::fs round-trip ------------------------------------------------
+    if !fs.write_file("rt.txt", "roundtrip"[..]) { e = e + 1  io.println("fs.write_file") }
+    String back = fs.read_file("rt.txt")
+    if !back.equals("roundtrip") { e = e + 1  io.println("fs.read_file") }
+
+    // --- std::io -----------------------------------------------------------
+    io.print("io: ") io.print_int(123) io.print(" ") io.println("ok")
+
+    io.print("errors=") io.println_int(cast<i64>(e))
+    if e != 0 { return 1 }
+    return 77
+}
+

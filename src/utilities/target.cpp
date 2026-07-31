@@ -184,6 +184,9 @@ std::string inferObjectFormat(const std::string& triple, const std::string& os, 
         loweredOs == "windows" || loweredOs == "uefi" || loweredAbi == "efi") {
         return "coff";
     }
+    if (loweredTriple.find("wasm") != std::string::npos || loweredOs == "wasi") {
+        return "wasm";
+    }
     return "elf";
 }
 
@@ -196,12 +199,14 @@ int inferPointerWidth(const std::string& arch) {
 }
 
 bool validateObjectFormat(const std::string& value) {
-    return value == "elf" || value == "mach-o" || value == "macho" || value == "coff";
+    return value == "elf" || value == "mach-o" || value == "macho" ||
+           value == "coff" || value == "wasm";
 }
 
 bool validateOutputFormat(const std::string& value) {
     return value == "executable" || value == "elf" || value == "kernel" ||
-           value == "raw-binary" || value == "binary" || value == "pe" || value == "uefi";
+           value == "raw-binary" || value == "binary" || value == "pe" ||
+           value == "uefi" || value == "wasm";
 }
 
 bool validateEndian(const std::string& value) {
@@ -243,18 +248,18 @@ std::optional<TargetSpec> loadTargetSpec(std::string_view cliNameOrPath, std::st
         return std::nullopt;
     }
 
-    std::string llvmTriple = getValue(values, "llvm_triple");
-    if (llvmTriple.empty()) {
-        errorMessage = "target spec requires llvm_triple";
+    std::string triple = getValue(values, "triple");
+    if (triple.empty()) {
+        errorMessage = "target spec requires triple";
         return std::nullopt;
     }
 
-    std::vector<std::string> tripleParts = splitTriple(llvmTriple);
+    std::vector<std::string> tripleParts = splitTriple(triple);
     std::string arch = lower(getValue(values, "arch", tripleParts.empty() ? "" : tripleParts[0]));
     std::string vendor = lower(getValue(values, "vendor", tripleParts.size() > 1 ? tripleParts[1] : "unknown"));
     std::string os = lower(getValue(values, "os", tripleParts.size() > 2 ? tripleParts[2] : "unknown"));
     std::string abi = lower(getValue(values, "abi", tripleParts.size() > 3 ? tripleParts[3] : ""));
-    std::string objectFormat = lower(getValue(values, "object_format", inferObjectFormat(llvmTriple, os, abi)));
+    std::string objectFormat = lower(getValue(values, "object_format", inferObjectFormat(triple, os, abi)));
     std::string outputFormat = lower(getValue(values, "output_format", "executable"));
     std::string endian = lower(getValue(values, "endian", "little"));
     int pointerWidth = parseInt(values, "pointer_width", inferPointerWidth(arch), errorMessage);
@@ -267,7 +272,7 @@ std::optional<TargetSpec> loadTargetSpec(std::string_view cliNameOrPath, std::st
         return std::nullopt;
     }
     if (!validateOutputFormat(outputFormat)) {
-        errorMessage = "target spec output_format must be one of: executable, elf, kernel, raw-binary, binary, pe, uefi";
+        errorMessage = "target spec output_format must be one of: executable, elf, kernel, raw-binary, binary, pe, uefi, wasm";
         return std::nullopt;
     }
     if (!validateEndian(endian)) {
@@ -283,7 +288,12 @@ std::optional<TargetSpec> loadTargetSpec(std::string_view cliNameOrPath, std::st
     bool isInstantOS = os == "instantos" || abi == "instantos";
     bool isApple = objectFormat == "mach-o" || objectFormat == "macho" || os == "macos" || os == "darwin";
     bool isWindowsLike = objectFormat == "coff";
-    bool defaultFreestanding = os == "none" || abi == "kernel" || isEfi || isInstantOS;
+    bool isWasm = objectFormat == "wasm";
+    // wasm32-unknown-unknown has no host runtime; wasm32-wasi does (its OS
+    // surface arrives as "wasi_snapshot_preview1" imports), so only the former
+    // defaults to freestanding.
+    bool defaultFreestanding = os == "none" || abi == "kernel" || isEfi || isInstantOS ||
+                               (isWasm && os != "wasi");
 
     TargetSpec spec;
     spec.kind = TargetKind::Custom;
@@ -292,7 +302,7 @@ std::optional<TargetSpec> loadTargetSpec(std::string_view cliNameOrPath, std::st
     spec.vendor = vendor;
     spec.os = os;
     spec.abi = abi;
-    spec.llvmTriple = llvmTriple;
+    spec.triple = triple;
     spec.objectFormat = objectFormat;
     spec.outputFormat = outputFormat;
     spec.pointerWidth = pointerWidth;
@@ -314,6 +324,7 @@ std::optional<TargetSpec> loadTargetSpec(std::string_view cliNameOrPath, std::st
     spec.isApple = isApple;
     spec.isEfi = isEfi;
     spec.isInstantOS = isInstantOS;
+    spec.isWasm = isWasm;
     spec.supportsLinuxSyscalls = parseBool(values, "supports_linux_syscalls", false, errorMessage);
     if (!errorMessage.empty()) {
         return std::nullopt;

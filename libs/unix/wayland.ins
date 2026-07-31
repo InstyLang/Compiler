@@ -1,0 +1,169 @@
+// Insty standard library: unix::wayland
+//
+// Core client bindings to libwayland-client for Wayland on Linux. As with
+// unix::x11, each extern carries the `[lib("wayland-client")]` directive, so
+// referencing any of them links the program as a hosted, dynamically-linked
+// ELF against `libwayland-client.so` (and libc) automatically.
+//
+//   import unix::wayland
+//
+//   fun main() -> i32 {
+//       u64 dpy = wayland.connect_default()   // uses $WAYLAND_DISPLAY
+//       if dpy == 0 { return 1 }
+//       wayland.roundtrip(dpy)                // sync with the compositor
+//       wayland.disconnect(dpy)
+//       return 0
+//   }
+//
+// Scope: this module binds the stable, exported libwayland-client entry points
+// - connecting to the compositor, the event-loop primitives (fd / dispatch /
+// roundtrip / flush) and the low-level wl_proxy_* marshalling core. Note that
+// most per-interface helpers in the C headers (wl_compositor_create_surface,
+// wl_display_get_registry, ...) are `static inline` wrappers around
+// wl_proxy_marshal_* plus generated interface tables, not exported symbols, so
+// building a full xdg-shell window is left to a higher-level module layered on
+// the wl_proxy_* primitives below.
+//
+// Conventions:
+//   - Opaque pointers (wl_display*, wl_proxy*, wl_event_queue*) are u64.
+//   - `text` arguments are NUL-terminated C strings.
+
+module wayland
+
+// =========================================================================
+// libwayland-client: connection
+// =========================================================================
+
+extern fun [lib("wayland-client")] wl_display_connect(text name) -> u64
+extern fun [lib("wayland-client")] wl_display_connect_to_fd(i32 fd) -> u64
+extern fun [lib("wayland-client")] wl_display_disconnect(u64 display) -> void
+extern fun [lib("wayland-client")] wl_display_get_fd(u64 display) -> i32
+
+// =========================================================================
+// libwayland-client: event loop
+// =========================================================================
+
+extern fun [lib("wayland-client")] wl_display_roundtrip(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_dispatch(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_dispatch_pending(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_flush(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_prepare_read(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_read_events(u64 display) -> i32
+extern fun [lib("wayland-client")] wl_display_cancel_read(u64 display) -> void
+
+// =========================================================================
+// libwayland-client: proxy core (foundation for interface bindings)
+// =========================================================================
+
+extern fun [lib("wayland-client")] wl_proxy_add_listener(u64 proxy, u64 implementation, u64 data) -> i32
+extern fun [lib("wayland-client")] wl_proxy_get_version(u64 proxy) -> u32
+extern fun [lib("wayland-client")] wl_proxy_destroy(u64 proxy) -> void
+
+// =========================================================================
+// Wrappers: connection
+// =========================================================================
+
+// Connect to a named Wayland display socket. Returns a wl_display* (as u64),
+// or 0 on failure.
+export fun connect(text name) -> u64 {
+    unsafe {
+        return wl_display_connect(name)
+    }
+    return 0
+}
+
+// Connect using the $WAYLAND_DISPLAY environment default (passes NULL to
+// wl_display_connect). Returns 0 on failure.
+export fun connect_default() -> u64 {
+    unsafe {
+        return wl_display_connect(cast<text>(0))
+    }
+    return 0
+}
+
+// Connect using an already-open socket file descriptor.
+export fun connect_to_fd(i32 fd) -> u64 {
+    unsafe {
+        return wl_display_connect_to_fd(fd)
+    }
+    return 0
+}
+
+// Close the connection to the compositor.
+export fun disconnect(u64 display) -> void {
+    unsafe {
+        wl_display_disconnect(display)
+    }
+}
+
+// The display's file descriptor (poll it for readiness in an event loop).
+export fun get_fd(u64 display) -> i32 {
+    unsafe {
+        return wl_display_get_fd(display)
+    }
+    return 0 - 1
+}
+
+// =========================================================================
+// Wrappers: event loop
+// =========================================================================
+
+// Send all pending requests and block until the server has processed them.
+// Returns the number of events dispatched, or -1 on error.
+export fun roundtrip(u64 display) -> i32 {
+    unsafe {
+        return wl_display_roundtrip(display)
+    }
+    return 0 - 1
+}
+
+// Block reading and dispatch one batch of events. Returns dispatched count or -1.
+export fun dispatch(u64 display) -> i32 {
+    unsafe {
+        return wl_display_dispatch(display)
+    }
+    return 0 - 1
+}
+
+// Dispatch events already queued without blocking on the socket.
+export fun dispatch_pending(u64 display) -> i32 {
+    unsafe {
+        return wl_display_dispatch_pending(display)
+    }
+    return 0 - 1
+}
+
+// Flush queued requests out to the compositor. Returns bytes sent or -1.
+export fun flush(u64 display) -> i32 {
+    unsafe {
+        return wl_display_flush(display)
+    }
+    return 0 - 1
+}
+
+// =========================================================================
+// Wrappers: proxy core
+// =========================================================================
+
+// Attach an event listener (a table of function pointers) to a proxy object.
+export fun proxy_add_listener(u64 proxy, u64 implementation, u64 data) -> i32 {
+    unsafe {
+        return wl_proxy_add_listener(proxy, implementation, data)
+    }
+    return 0 - 1
+}
+
+// Protocol object version negotiated for this proxy.
+export fun proxy_version(u64 proxy) -> u32 {
+    unsafe {
+        return wl_proxy_get_version(proxy)
+    }
+    return 0
+}
+
+// Destroy a proxy object.
+export fun proxy_destroy(u64 proxy) -> void {
+    unsafe {
+        wl_proxy_destroy(proxy)
+    }
+}

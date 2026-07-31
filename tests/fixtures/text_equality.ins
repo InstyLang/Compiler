@@ -1,0 +1,25 @@
+// `text ==` / `!=` are content comparisons (not pointer identity). A heap-built
+// string compares equal to a literal with the same bytes; null is handled
+// safely. Returns 42 when all cases hold.
+module main
+
+import std::string
+
+fun main() -> i32 {
+    String s = String()
+    s.append("foo")
+    s.append("bar")             // "foobar" on the heap (distinct address)
+    text built = s.cstr()
+    i64 ok = 0
+    if built == "foobar" { ok = ok + 1 }   // content equality (pointer compare failed here)
+    if built != "foobaz" { ok = ok + 1 }
+    if "abc" == "abc" { ok = ok + 1 }
+    if "abc" != "abd" { ok = ok + 1 }
+    text z = ""
+    unsafe { z = cast<text>(0) }
+    if z != "x" { ok = ok + 1 }            // null-safe: null != non-null
+    if ok == 5 {
+        return 42
+    }
+    return 0
+}

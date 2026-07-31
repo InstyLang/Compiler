@@ -1,0 +1,25 @@
+module main
+
+class Point {
+    i32 x
+    i32 y
+
+    constructor(i32 a, i32 b) {
+        this.x = a
+        this.y = b
+    }
+
+    fun sum() -> i32 {
+        return this.x + this.y
+    }
+}
+
+fun main() -> i32 {
+    unsafe {
+        i32 n = 3
+        Point* arr = new Point[n](4, 5)
+        i32 total = arr[2].sum()
+        delete arr
+        return total
+    }
+}

@@ -17,8 +17,10 @@ enum class NodeType {
     IfStatement,
     WhileLoop,
     InfiniteLoop,
+    ForLoop,
     WhenStatement,
     SwitchStatement,
+    MatchStatement,
     ReturnStatement,
     BreakStatement,
     SkipStatement,
@@ -42,6 +44,7 @@ enum class NodeType {
     DereferenceExpr,
     MemberAccess,
     IndexExpr,
+    SliceExpr,
     ArrayLiteral,
     ObjectLiteral,
     ObjectProperty,
@@ -49,6 +52,7 @@ enum class NodeType {
     NewExpression,
     DeleteExpression,
     InlineAsmExpr,
+    Lambda,
 
     TypeReference,
     StructDeclaration,
@@ -155,6 +159,20 @@ struct InfiniteLoop : ExprAST {
     NodeType nodeType() const override { return NodeType::InfiniteLoop; }
 };
 
+// `for <var> in <iterable> { ... }` or `for <var> in <start>..<end> { ... }`.
+// Range form (`isRange`): iterate the half-open integer range [start, end).
+// Iterable form: iterate the elements of a slice, fixed array, or `text`, with
+// `var` bound to a copy of each element.
+struct ForLoop : ExprAST {
+    std::string varName;
+    bool isRange = false;
+    NodePtr iterable;     // iterable form: the source (slice/array/text)
+    NodePtr rangeStart;   // range form: lower bound (inclusive)
+    NodePtr rangeEnd;     // range form: upper bound (exclusive)
+    NodeList body;
+    NodeType nodeType() const override { return NodeType::ForLoop; }
+};
+
 struct WhenStatement : ExprAST {
     NodePtr condition;
     NodeList consequent;
@@ -171,6 +189,22 @@ struct SwitchStatement : ExprAST {
     NodePtr subject;
     std::vector<SwitchArm> arms;
     NodeType nodeType() const override { return NodeType::SwitchStatement; }
+};
+
+// `match subject { Variant(bindings) => body, ..., _ => body }`. Destructures a
+// tagged-union value: each non-default arm names a variant and binds its payload
+// fields to fresh locals scoped to the arm body.
+struct MatchArm {
+    std::string variant;               // variant name (empty for the `_` arm)
+    std::vector<std::string> bindings; // payload binding names (may be empty)
+    NodeList body;
+    bool isDefault = false;
+};
+
+struct MatchStatement : ExprAST {
+    NodePtr subject;
+    std::vector<MatchArm> arms;
+    NodeType nodeType() const override { return NodeType::MatchStatement; }
 };
 
 struct ReturnStatement : ExprAST {
@@ -193,7 +227,10 @@ struct UnsafeBlock : ExprAST {
 
 
 struct IntegerLiteral : ExprAST {
-    long long value = 0;
+    // 128-bit so that i128/u128 literals are represented exactly. Narrower
+    // literals (the common case) still fit and read back as `long long` via an
+    // implicit narrowing conversion at the use sites that only need 64 bits.
+    __int128 value = 0;
     std::string raw;
     NodeType nodeType() const override { return NodeType::IntegerLiteral; }
 };
@@ -299,6 +336,16 @@ struct ArrayLiteral : ExprAST {
     NodeType nodeType() const override { return NodeType::ArrayLiteral; }
 };
 
+// A sub-slice expression `object[start..end]`. `start`/`end` are optional
+// (`object[..end]`, `object[start..]`, `object[..]`): a null bound defaults to
+// 0 / the source length. The result is a slice `T[]` over the source's storage.
+struct SliceExpr : ExprAST {
+    NodePtr object;
+    NodePtr start;  // may be null (defaults to 0)
+    NodePtr end;    // may be null (defaults to source length)
+    NodeType nodeType() const override { return NodeType::SliceExpr; }
+};
+
 struct ObjectProperty : ExprAST {
     std::string key;
     NodePtr value;
@@ -334,12 +381,39 @@ struct DeleteExpression : ExprAST {
     NodeType nodeType() const override { return NodeType::DeleteExpression; }
 };
 
+// Inline assembly. Two forms share this node:
+//
+//   legacy:  asm<i64>("syscall", "={rax},{rax},{rdi}", num, arg)
+//     A single bare instruction plus LLVM-style register constraints. Kept
+//     because the runtime and the syscall wrappers are written against it.
+//
+//   block:   asm [keep(rax), keep(rdx)]( ... NASM text ... )
+//     `rawBody` holds the assembly verbatim (comments included) and is parsed by
+//     the backend's own assembler. `attributes` holds the bracketed directives:
+//     `keep(reg)` reserves a register for the block, meaning the allocator keeps
+//     nothing live in it across the block. Registers the block touches that are
+//     *not* declared are treated as clobbered, so an under-declared block costs
+//     performance rather than correctness.
 struct InlineAsmExpr : ExprAST {
     std::string templateString;
     std::string constraints;
     std::string returnType;
     NodeList inputs;
+    bool isBlock = false;
+    std::string rawBody;
+    std::vector<Attribute> attributes;
     NodeType nodeType() const override { return NodeType::InlineAsmExpr; }
+};
+
+// An anonymous function: `|params| => expr` or `|params| => { ... }`. The
+// parser lifts the body into a synthesized top-level function (`function`,
+// named `name`) so the lambda value is just that function's address (a
+// non-capturing function pointer). Its type is a Function type (params ->
+// inferred return).
+struct LambdaExpr : ExprAST {
+    std::string name;                               // synthesized symbol name
+    std::shared_ptr<FunctionDeclaration> function;  // lifted function (owns body)
+    NodeType nodeType() const override { return NodeType::Lambda; }
 };
 
 
@@ -361,6 +435,10 @@ struct EnumVariant {
     std::string name;
     long long value = 0;
     bool hasExplicitValue = false;
+    // Payload field type spellings for a tagged-union (sum-type) variant, e.g.
+    // `Add(Expr*, Expr*)`. Empty for a plain C-style variant. An enum with any
+    // payload-carrying variant is a sum type.
+    std::vector<std::string> payloadTypes;
 };
 
 struct EnumDeclaration : ExprAST {
@@ -375,6 +453,7 @@ struct Method {
     std::string name;
     std::vector<Parameter> parameters;
     std::string returnType;
+    bool hasExplicitReturnType = false;
     std::vector<Attribute> attributes;
     bool isConstructor = false;
     bool isDestructor = false;
@@ -424,8 +503,10 @@ INSTY_NODE_TYPE_OF(AssignmentExpr, AssignmentExpr)
 INSTY_NODE_TYPE_OF(IfStatement, IfStatement)
 INSTY_NODE_TYPE_OF(WhileLoop, WhileLoop)
 INSTY_NODE_TYPE_OF(InfiniteLoop, InfiniteLoop)
+INSTY_NODE_TYPE_OF(ForLoop, ForLoop)
 INSTY_NODE_TYPE_OF(WhenStatement, WhenStatement)
 INSTY_NODE_TYPE_OF(SwitchStatement, SwitchStatement)
+INSTY_NODE_TYPE_OF(MatchStatement, MatchStatement)
 INSTY_NODE_TYPE_OF(ReturnStatement, ReturnStatement)
 INSTY_NODE_TYPE_OF(BreakStatement, BreakStatement)
 INSTY_NODE_TYPE_OF(SkipStatement, SkipStatement)
@@ -447,12 +528,14 @@ INSTY_NODE_TYPE_OF(AddressOfExpr, AddressOfExpr)
 INSTY_NODE_TYPE_OF(DereferenceExpr, DereferenceExpr)
 INSTY_NODE_TYPE_OF(MemberAccessExpr, MemberAccess)
 INSTY_NODE_TYPE_OF(ArrayLiteral, ArrayLiteral)
+INSTY_NODE_TYPE_OF(SliceExpr, SliceExpr)
 INSTY_NODE_TYPE_OF(ObjectProperty, ObjectProperty)
 INSTY_NODE_TYPE_OF(ObjectLiteral, ObjectLiteral)
 INSTY_NODE_TYPE_OF(StructInstantiation, StructInstantiation)
 INSTY_NODE_TYPE_OF(NewExpression, NewExpression)
 INSTY_NODE_TYPE_OF(DeleteExpression, DeleteExpression)
 INSTY_NODE_TYPE_OF(InlineAsmExpr, InlineAsmExpr)
+INSTY_NODE_TYPE_OF(LambdaExpr, Lambda)
 INSTY_NODE_TYPE_OF(StructDeclaration, StructDeclaration)
 INSTY_NODE_TYPE_OF(EnumDeclaration, EnumDeclaration)
 INSTY_NODE_TYPE_OF(ClassDeclaration, ClassDeclaration)

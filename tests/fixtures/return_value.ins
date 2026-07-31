@@ -1,0 +1,57 @@
+module main
+
+// Return-by-value of a class with a destructor is destroyed exactly once:
+//   - prvalue return (`return T(...)`) is constructed straight into the caller's
+//     result storage (RVO),
+//   - returning a named local moves it into the caller's storage (NRVO), so the
+//     local's destructor does not also run,
+//   - on a conditional return only the returned local is moved; any sibling
+//     local on that path is still destroyed.
+// A class with a non-trivial destructor is returned in memory regardless of size
+// (the 8-byte Box would otherwise be returned in a register and bitwise-copied).
+
+i32 dtors = 0
+
+class Box {
+    i32 v
+
+    constructor(i32 x) {
+        this.v = x
+    }
+
+    destructor() -> void {
+        dtors = dtors + 1
+    }
+}
+
+fun makePrvalue(i32 x) -> Box {
+    return Box(x)          // RVO: built directly in the caller's storage
+}
+
+fun makeNamed(i32 x) -> Box {
+    Box b = Box(x)
+    return b               // NRVO: b is moved out, not destroyed here
+}
+
+fun pick(i32 c) -> Box {
+    Box lo = Box(1)
+    Box hi = Box(2)
+    if (c > 0) {
+        return hi          // hi moved out; lo is destroyed on this path
+    }
+    return lo              // lo moved out; hi is destroyed on this path
+}
+
+fun run() -> i32 {
+    Box a = makePrvalue(10)
+    Box b = makeNamed(20)
+    Box c = pick(1)        // pick destroys lo (+1); c receives the moved hi
+    return a.v + b.v + c.v // 10 + 20 + 2 = 32
+    // run() exit destroys a, b, c (+3)
+}
+
+fun main() -> i32 {
+    i32 sum = run()
+    // dtors = pick.lo(1) + a/b/c(3) = 4 ; 32 + 4 = 36
+    return sum + dtors
+}

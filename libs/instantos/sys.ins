@@ -1,0 +1,127 @@
+// Insty standard library: instantos::sys
+//
+// Raw InstantOS userland syscalls for the x86_64_instantos target.
+// InstantOS programs are dynamically-linked PIEs running on mlibc + the
+// ld-instantos.so runtime loader; this module exposes the kernel syscall
+// interface directly so Insty code can talk to the kernel without going
+// through mlibc.
+//
+// Syscall ABI (see InstantOS mlibc-sysdeps/instantos/syscall.cpp): the
+// `syscall` instruction with rax=number, rbx=arg1, r10=arg2, rdx=arg3,
+// r8=arg4, r9=arg5; the result is returned in rax. The compiler lowers
+// std::syscall issues exactly this register convention for this target.
+// Return values in the range [-4095, -1] are negated errno codes.
+//
+// Syscall numbers mirror enum class SyscallNumber in the kernel
+// (include/cpu/syscall/syscall.hpp) and bits/syscall.h in the sysdeps.
+//
+// Usage:
+//     import instantos::sys
+//
+//     fun main() -> i32 {
+//         unsafe { instantos.write(1, cast<void*>("hi\n"), 3) }
+//         return 0
+//     }
+
+module instantos
+
+// Kernel entry: the register convention lives in std::syscall, not here.
+import std::syscall
+
+// =========================================================================
+// Syscall numbers (ordinals of enum class SyscallNumber)
+// =========================================================================
+
+export fun nr_exit() -> i64 { return 2 }
+export fun nr_write() -> i64 { return 3 }
+export fun nr_read() -> i64 { return 4 }
+export fun nr_open() -> i64 { return 5 }
+export fun nr_close() -> i64 { return 6 }
+export fun nr_getpid() -> i64 { return 7 }
+export fun nr_mmap() -> i64 { return 12 }
+export fun nr_munmap() -> i64 { return 13 }
+export fun nr_yield() -> i64 { return 14 }
+export fun nr_sleep() -> i64 { return 15 }
+export fun nr_seek() -> i64 { return 77 }
+export fun nr_mprotect() -> i64 { return 90 }
+
+// =========================================================================
+// Raw syscall wrappers
+//
+// std::syscall.sysN(num, args...) issues the InstantOS register convention. The
+// pointer-bearing wrappers take an explicit address so callers stay in
+// control of unsafe casts; call them from an unsafe context.
+// =========================================================================
+
+// exit(code): terminate the current process. Does not return.
+export fun exit(i32 code) -> void {
+    unsafe {
+        syscall.sys1(2, cast<i64>(code))
+    }
+}
+
+// write(fd, buf, len): write `len` bytes from `buf` to descriptor `fd`.
+// Returns the byte count, or a negative errno.
+export fun write(i64 fd, void* buf, i64 len) -> i64 {
+    unsafe {
+        return syscall.sys3(3, fd, cast<i64>(buf), len)
+    }
+    return 0
+}
+
+// read(fd, buf, len): read up to `len` bytes into `buf`. Returns the byte
+// count, 0 at EOF, or a negative errno.
+export fun read(i64 fd, void* buf, i64 len) -> i64 {
+    unsafe {
+        return syscall.sys3(4, fd, cast<i64>(buf), len)
+    }
+    return 0
+}
+
+// open(path, flags, mode): open a file, returning a handle or negative errno.
+export fun open(text path, i64 flags, i64 mode) -> i64 {
+    unsafe {
+        return syscall.sys3(5, cast<i64>(path), flags, mode)
+    }
+    return 0
+}
+
+// close(fd): close a descriptor. Returns 0 on success or negative errno.
+export fun close(i64 fd) -> i64 {
+    unsafe {
+        return syscall.sys1(6, fd)
+    }
+    return 0
+}
+
+// getpid(): the calling process id.
+export fun getpid() -> i64 {
+    unsafe {
+        return syscall.sys0(7)
+    }
+    return 0
+}
+
+// seek(fd, offset, whence): reposition the file offset.
+export fun seek(i64 fd, i64 offset, i64 whence) -> i64 {
+    unsafe {
+        return syscall.sys3(77, fd, offset, whence)
+    }
+    return 0
+}
+
+// yield_now(): voluntarily yield the CPU to the scheduler.
+export fun yield_now() -> void {
+    unsafe {
+        syscall.sys0(14)
+    }
+}
+
+// sleep_ms(ms): sleep for the given number of milliseconds.
+export fun sleep_ms(i64 ms) -> void {
+    unsafe {
+        syscall.sys1(15, ms)
+    }
+}
+
+

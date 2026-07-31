@@ -1,0 +1,20 @@
+module main
+
+fun main() -> i32 {
+    unsafe {
+        u64 huge = 0 - 8
+
+        u8* p = @malloc(32, huge)
+        if cast<u64>(p) != 0 {
+            @free(p, 32, huge)
+            return 10
+        }
+
+        u8* arr = new u8[huge]
+        if cast<u64>(arr) != 0 {
+            return 11
+        }
+
+        return 42
+    }
+}

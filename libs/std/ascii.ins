@@ -1,0 +1,109 @@
+// Insty standard library: ascii
+//
+// Byte-oriented ASCII helpers. These operate on u8 values, not Unicode scalar
+// values; bytes outside the ASCII ranges are left unchanged or reported false.
+
+module ascii
+
+export fun is_digit(u8 b) -> bool {
+    return b >= 48 && b <= 57
+}
+
+export fun is_lower(u8 b) -> bool {
+    return b >= 97 && b <= 122
+}
+
+export fun is_upper(u8 b) -> bool {
+    return b >= 65 && b <= 90
+}
+
+export fun is_alpha(u8 b) -> bool {
+    return is_lower(b) || is_upper(b)
+}
+
+export fun is_alnum(u8 b) -> bool {
+    return is_alpha(b) || is_digit(b)
+}
+
+export fun is_hex_digit(u8 b) -> bool {
+    if is_digit(b) {
+        return true
+    }
+    if b >= 65 && b <= 70 {
+        return true
+    }
+    return b >= 97 && b <= 102
+}
+
+export fun is_space(u8 b) -> bool {
+    if b == 32 {
+        return true
+    }
+    return b >= 9 && b <= 13
+}
+
+export fun is_control(u8 b) -> bool {
+    return b < 32 || b == 127
+}
+
+export fun is_printable(u8 b) -> bool {
+    return b >= 32 && b < 127
+}
+
+export fun to_lower(u8 b) -> u8 {
+    if is_upper(b) {
+        return cast<u8>(b + 32)
+    }
+    return b
+}
+
+export fun to_upper(u8 b) -> u8 {
+    if is_lower(b) {
+        return cast<u8>(b - 32)
+    }
+    return b
+}
+
+// Decimal digit value, or -1 when b is not '0'..'9'.
+export fun digit_value(u8 b) -> i64 {
+    if is_digit(b) {
+        return cast<i64>(b - 48)
+    }
+    return 0 - 1
+}
+
+// Hex digit value, or -1 when b is not an ASCII hex digit.
+export fun hex_value(u8 b) -> i64 {
+    if is_digit(b) {
+        return cast<i64>(b - 48)
+    }
+    if b >= 65 && b <= 70 {
+        return cast<i64>(b - 55)
+    }
+    if b >= 97 && b <= 102 {
+        return cast<i64>(b - 87)
+    }
+    return 0 - 1
+}
+
+// Convert a 0..15 nibble to lowercase ASCII hex. Out-of-range values yield '0'.
+export fun hex_lower(u8 value) -> u8 {
+    if value < 10 {
+        return cast<u8>(48 + value)
+    }
+    if value < 16 {
+        return cast<u8>(87 + value)
+    }
+    return 48
+}
+
+// Convert a 0..15 nibble to uppercase ASCII hex. Out-of-range values yield '0'.
+export fun hex_upper(u8 value) -> u8 {
+    if value < 10 {
+        return cast<u8>(48 + value)
+    }
+    if value < 16 {
+        return cast<u8>(55 + value)
+    }
+    return 48
+}

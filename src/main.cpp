@@ -17,7 +17,6 @@ void printUsage() {
         "Output modes:\n"
         "  (default)              build an executable (link)\n"
         "  -c                     compile to object files only\n"
-        "  --emit-llvm            emit textual LLVM IR (.ll)\n"
         "  --emit-tokens          print the token stream\n"
         "  --emit-ast             parse + semantic-check, print summary\n"
         "  --check                parse + semantic-check only\n"
@@ -41,8 +40,9 @@ void printUsage() {
         "  --raw-binary           emit a flat binary\n"
         "  --multiboot2           prepend a Multiboot2 header object\n"
         "  -O0 -O1 -O2 -O3        optimization level\n"
-        "  -v, --verbose          verbose output\n"
-        "  -h, --help             show this help\n";
+        "  --bounds-check         trap on out-of-range slice/array indexing\n"
+    "  -v, --verbose          verbose output\n"
+    "  -h, --help             show this help\n";
 }
 
 bool needsValue(const std::string& flag, int& i, int argc, char** argv, std::string& out) {
@@ -74,9 +74,6 @@ int main(int argc, char** argv) {
             return 0;
         } else if (arg == "-c") {
             sawObjectOnly = true;
-        } else if (arg == "--emit-llvm") {
-            config.mode = Config::OutputMode::EmitLlvm;
-            sawExplicitMode = true;
         } else if (arg == "--emit-tokens") {
             config.mode = Config::OutputMode::EmitTokens;
             sawExplicitMode = true;
@@ -129,6 +126,8 @@ int main(int argc, char** argv) {
             config.optLevel = 3;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
+        } else if (arg == "--bounds-check") {
+            config.boundsCheck = true;
         } else if (arg == "-L" || arg == "--module-path") {
             if (!needsValue(arg, i, argc, argv, value)) return 2;
             config.moduleSearchPaths.push_back(value);
@@ -149,7 +148,6 @@ int main(int argc, char** argv) {
     if (!sawExplicitMode) {
         config.mode = sawObjectOnly ? Config::OutputMode::Object
                                     : Config::OutputMode::Executable;
-    } else if (sawObjectOnly && config.mode == Config::OutputMode::EmitLlvm) {
     }
 
     std::string targetError;

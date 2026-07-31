@@ -1,0 +1,375 @@
+// Insty standard library: str
+//
+// String utilities for NUL-terminated `text` strings. Strings are walked
+// byte-by-byte through u8 pointers; no allocation is performed.
+
+module str
+
+// Length of a NUL-terminated string, excluding the terminator.
+export fun len(text s) -> i64 {
+    // Scans for the NUL terminator. This is the primitive the rest of the library
+    // builds on, so it is written out here rather than calling a builtin.
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = 0
+        while p[i] != 0 {
+            i = i + 1
+        }
+        return i
+    }
+    return 0
+}
+
+// True when s contains no bytes before its NUL terminator.
+export fun is_empty(text s) -> bool {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        return p[0] == 0
+    }
+    return true
+}
+
+// True when both strings contain exactly the same bytes.
+export fun eq(text a, text b) -> bool {
+    unsafe {
+        u8* pa = cast<u8*>(a)
+        u8* pb = cast<u8*>(b)
+        i64 i = 0
+        while true {
+            u8 ca = pa[i]
+            u8 cb = pb[i]
+            if ca != cb {
+                return false
+            }
+            if ca == 0 {
+                return true
+            }
+            i = i + 1
+        }
+    }
+    return true
+}
+
+// True when the strings differ.
+export fun neq(text a, text b) -> bool {
+    return !eq(a, b)
+}
+
+// Lexicographic byte comparison: -1 when a < b, 1 when a > b, else 0.
+export fun cmp(text a, text b) -> i64 {
+    unsafe {
+        u8* pa = cast<u8*>(a)
+        u8* pb = cast<u8*>(b)
+        i64 i = 0
+        while true {
+            u8 ca = pa[i]
+            u8 cb = pb[i]
+            if ca < cb {
+                return 0 - 1
+            }
+            if ca > cb {
+                return 1
+            }
+            if ca == 0 {
+                return 0
+            }
+            i = i + 1
+        }
+    }
+    return 0
+}
+
+// True when s starts with the given prefix.
+export fun starts_with(text s, text prefix) -> bool {
+    unsafe {
+        u8* ps = cast<u8*>(s)
+        u8* pp = cast<u8*>(prefix)
+        i64 i = 0
+        while true {
+            u8 cp = pp[i]
+            if cp == 0 {
+                return true
+            }
+            if ps[i] != cp {
+                return false
+            }
+            i = i + 1
+        }
+    }
+    return true
+}
+
+// True when s ends with the given suffix.
+export fun ends_with(text s, text suffix) -> bool {
+    unsafe {
+        i64 slen = len(s)
+        i64 tlen = len(suffix)
+        if tlen > slen {
+            return false
+        }
+        u8* ps = cast<u8*>(s)
+        u8* pt = cast<u8*>(suffix)
+        i64 base = slen - tlen
+        i64 i = 0
+        while i < tlen {
+            if ps[base + i] != pt[i] {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+    return false
+}
+
+// Byte at the given index (no bounds checking beyond the terminator scan;
+// returns 0 when the index is past the end of the string).
+export fun byte_at(text s, i64 index) -> u8 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = 0
+        while i < index {
+            if p[i] == 0 {
+                return 0
+            }
+            i = i + 1
+        }
+        return p[index]
+    }
+    return 0
+}
+
+// Index of the first occurrence of byte c, or -1 when not present.
+export fun index_of(text s, u8 c) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = 0
+        while true {
+            u8 cur = p[i]
+            if cur == c {
+                return i
+            }
+            if cur == 0 {
+                return 0 - 1
+            }
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
+// True when b is an ASCII decimal digit.
+export fun is_digit(u8 b) -> bool {
+    return b >= 48 && b <= 57
+}
+
+// True when b is an ASCII lowercase letter.
+export fun is_lower(u8 b) -> bool {
+    return b >= 97 && b <= 122
+}
+
+// True when b is an ASCII uppercase letter.
+export fun is_upper(u8 b) -> bool {
+    return b >= 65 && b <= 90
+}
+
+// True when b is an ASCII letter.
+export fun is_alpha(u8 b) -> bool {
+    return is_lower(b) || is_upper(b)
+}
+
+// True when b is an ASCII letter or decimal digit.
+export fun is_alnum(u8 b) -> bool {
+    return is_alpha(b) || is_digit(b)
+}
+
+// True for ASCII whitespace: space, tab, newline, carriage return, form feed, vertical tab.
+export fun is_space(u8 b) -> bool {
+    if b == 32 {
+        return true
+    }
+    return b >= 9 && b <= 13
+}
+
+// ASCII lowercase conversion for a single byte.
+export fun to_lower(u8 b) -> u8 {
+    if is_upper(b) {
+        return cast<u8>(b + 32)
+    }
+    return b
+}
+
+// ASCII uppercase conversion for a single byte.
+export fun to_upper(u8 b) -> u8 {
+    if is_lower(b) {
+        return cast<u8>(b - 32)
+    }
+    return b
+}
+
+// Index of the first occurrence of byte c at or after start, or -1.
+export fun index_of_from(text s, u8 c, i64 start) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = start
+        if i < 0 {
+            i = 0
+        }
+        while true {
+            u8 cur = p[i]
+            if cur == c {
+                return i
+            }
+            if cur == 0 {
+                return 0 - 1
+            }
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
+// Index of the last occurrence of byte c, or -1 when not present.
+export fun last_index_of(text s, u8 c) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 found = 0 - 1
+        i64 i = 0
+        while true {
+            u8 cur = p[i]
+            if cur == c {
+                found = i
+            }
+            if cur == 0 {
+                return found
+            }
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
+// Count occurrences of byte c in s.
+export fun count_byte(text s, u8 c) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 count = 0
+        i64 i = 0
+        while true {
+            u8 cur = p[i]
+            if cur == 0 {
+                return count
+            }
+            if cur == c {
+                count = count + 1
+            }
+            i = i + 1
+        }
+    }
+    return 0
+}
+
+// Index of the first occurrence of needle in s, or -1 when not present.
+export fun find(text s, text needle) -> i64 {
+    unsafe {
+        i64 nlen = len(needle)
+        if nlen == 0 {
+            return 0
+        }
+        i64 slen = len(s)
+        if nlen > slen {
+            return 0 - 1
+        }
+        u8* ps = cast<u8*>(s)
+        u8* pn = cast<u8*>(needle)
+        i64 limit = slen - nlen
+        i64 i = 0
+        while i <= limit {
+            i64 j = 0
+            bool ok = true
+            while j < nlen {
+                if ps[i + j] != pn[j] {
+                    ok = false
+                    break
+                }
+                j = j + 1
+            }
+            if ok {
+                return i
+            }
+            i = i + 1
+        }
+        return 0 - 1
+    }
+    return 0 - 1
+}
+
+// True when needle appears in s.
+export fun contains(text s, text needle) -> bool {
+    return find(s, needle) >= 0
+}
+
+// 64-bit hash of the string's bytes. Suitable for hash tables. Delegates to the
+// `@hash` builtin, which folds string literals at compile time and otherwise
+// calls the fast runtime hash (`__ins_hash`) -- so a `String`, a `text`, and an
+// equal literal all hash identically, and hash-table code picks up the fastest
+// hash available for the target (e.g. GxHash on x86-64).
+export fun hash(text s) -> u64 {
+    return @hash(s)
+}
+
+// Parse a base-10 signed integer, ignoring one optional leading '+'/'-'. Stops at
+// the first non-digit; returns 0 for an empty or non-numeric string.
+export fun to_i64(text s) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = 0
+        bool neg = false
+        if p[0] == 45 {          // '-'
+            neg = true
+            i = 1
+        } else if p[0] == 43 {   // '+'
+            i = 1
+        }
+        i64 value = 0
+        while is_digit(p[i]) {
+            value = value * 10 + cast<i64>(p[i] - 48)
+            i = i + 1
+        }
+        if neg {
+            return 0 - value
+        }
+        return value
+    }
+    return 0
+}
+
+// Number of leading ASCII whitespace bytes.
+export fun trim_start_index(text s) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 i = 0
+        while is_space(p[i]) {
+            i = i + 1
+        }
+        return i
+    }
+    return 0
+}
+
+// Index one past the last non-whitespace byte.
+export fun trim_end_index(text s) -> i64 {
+    unsafe {
+        u8* p = cast<u8*>(s)
+        i64 end = len(s)
+        while end > 0 {
+            if !is_space(p[end - 1]) {
+                return end
+            }
+            end = end - 1
+        }
+        return 0
+    }
+    return 0
+}
+

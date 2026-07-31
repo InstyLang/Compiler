@@ -1,0 +1,351 @@
+// Insty standard library: windows::window
+//
+// Real Win32 windowing for the x86_64_windows target: register a window class
+// with a WNDPROC callback, create a top-level window, and pump the message
+// loop - the user32.dll counterpart to unix::x11. Functions are imported from
+// the system DLLs via `extern fun [dll("...")]`, so the PE writer turns each
+// referenced extern into an import-table entry (no import library needed).
+//
+//   import windows::window
+//
+//   // The window procedure: a normal function whose address is handed to the
+//   // OS. Its signature is the Win64 WNDPROC (hwnd, msg, wParam, lParam).
+//   fun wnd_proc(u64 hwnd, u32 msg, u64 wparam, i64 lparam) -> i64 {
+//       if msg == windows.wm_destroy() {
+//           windows.post_quit(0)
+//           return 0
+//       }
+//       return windows.def_window_proc(hwnd, msg, wparam, lparam)
+//   }
+//
+//   fun main() -> i32 {
+//       u64 inst = windows.instance_handle()
+//       // Taking a function address is a pointer cast, so do it in `unsafe`.
+//       u64 proc = 0
+//       unsafe { proc = cast<u64>(&wnd_proc) }
+//       windows.register_class("InstyWindow", proc, inst)
+//       u64 hwnd = windows.create_window("InstyWindow", "Hello, Insty",
+//                                        640, 480, inst)
+//       if hwnd == 0 { return 1 }
+//       windows.show_default(hwnd)
+//       windows.update(hwnd)
+//       return windows.run_message_loop()
+//   }
+//
+// Conventions (matching windows::core and unix::x11):
+//   - Opaque handles (HWND, HINSTANCE, HCURSOR, HBRUSH, WNDPROC) are u64.
+//   - LRESULT / LPARAM are i64; WPARAM is u64; message ids / styles are u32.
+//   - `text` arguments are NUL-terminated C strings.
+//   - Structs use the natural C layout the backend already produces.
+//   - Constants are exposed as zero-argument accessor functions.
+//
+// Note: get the WNDPROC address with `cast<u64>(&your_proc)`; the function
+// must have the (u64, u32, u64, i64) -> i64 signature above.
+
+module windows
+
+// =========================================================================
+// WNDCLASSEXA / MSG (natural C layout on x86-64: 80 and 48 bytes).
+// =========================================================================
+
+struct [repr(C)] WndClassExA {
+    u32 size,           // cbSize (= 80)
+    u32 style,          // CS_* flags
+    u64 wndproc,        // WNDPROC (function pointer)
+    i32 cls_extra,      // cbClsExtra
+    i32 wnd_extra,      // cbWndExtra
+    u64 hinstance,      // HINSTANCE
+    u64 icon,           // HICON
+    u64 cursor,         // HCURSOR
+    u64 background,     // HBRUSH
+    u64 menu_name,      // LPCSTR
+    u64 class_name,     // LPCSTR
+    u64 icon_sm         // HICON
+}
+
+struct [repr(C)] Msg {
+    u64 hwnd,           // 0
+    u32 message,        // 8  (natural 4-byte pad follows to align wparam @16)
+    u64 wparam,         // 16
+    i64 lparam,         // 24
+    u32 time,           // 32
+    i32 pt_x,           // 36
+    i32 pt_y            // 40  (total size rounds to 48)
+}
+
+// =========================================================================
+// kernel32.dll / user32.dll imports
+// =========================================================================
+
+extern fun [dll("kernel32.dll")] GetModuleHandleA(text moduleName) -> u64
+
+extern fun [dll("user32.dll")] RegisterClassExA(void* wndClass) -> u16
+extern fun [dll("user32.dll")] CreateWindowExA(u32 exStyle, void* className,
+    void* windowName, u32 style, i32 x, i32 y, i32 width, i32 height,
+    u64 parent, u64 menu, u64 instance, u64 param) -> u64
+extern fun [dll("user32.dll")] DestroyWindow(u64 hwnd) -> i32
+extern fun [dll("user32.dll")] DefWindowProcA(u64 hwnd, u32 msg, u64 wparam, i64 lparam) -> i64
+extern fun [dll("user32.dll")] ShowWindow(u64 hwnd, i32 cmdShow) -> i32
+extern fun [dll("user32.dll")] UpdateWindow(u64 hwnd) -> i32
+extern fun [dll("user32.dll")] LoadCursorA(u64 instance, void* cursorName) -> u64
+
+extern fun [dll("user32.dll")] GetMessageA(void* msg, u64 hwnd, u32 filterMin, u32 filterMax) -> i32
+extern fun [dll("user32.dll")] PeekMessageA(void* msg, u64 hwnd, u32 filterMin, u32 filterMax, u32 removeMsg) -> i32
+extern fun [dll("user32.dll")] TranslateMessage(void* msg) -> i32
+extern fun [dll("user32.dll")] DispatchMessageA(void* msg) -> i64
+extern fun [dll("user32.dll")] PostQuitMessage(i32 exitCode) -> void
+
+// =========================================================================
+// Wrappers: instance / class / cursor
+// =========================================================================
+
+// HINSTANCE of the running process (GetModuleHandleA(NULL)).
+export fun instance_handle() -> u64 {
+    unsafe {
+        return GetModuleHandleA(cast<text>(0))
+    }
+    return 0
+}
+
+// Load the standard arrow cursor (IDC_ARROW).
+export fun arrow_cursor() -> u64 {
+    unsafe {
+        return LoadCursorA(0, cast<void*>(32512))
+    }
+    return 0
+}
+
+// Register a window class. `wndproc` is a function address obtained with
+// `cast<u64>(&your_proc)`. Returns the class ATOM (0 on failure). Uses the
+// arrow cursor and the default window background.
+export fun register_class(text class_name, u64 wndproc, u64 instance) -> u16 {
+    WndClassExA wc
+    unsafe {
+        wc.size = 80
+        wc.style = 0x0003          // CS_HREDRAW | CS_VREDRAW
+        wc.wndproc = wndproc
+        wc.cls_extra = 0
+        wc.wnd_extra = 0
+        wc.hinstance = instance
+        wc.icon = 0
+        wc.cursor = arrow_cursor()
+        wc.background = 6          // (HBRUSH)(COLOR_WINDOW + 1)
+        wc.menu_name = 0
+        wc.class_name = cast<u64>(class_name)
+        wc.icon_sm = 0
+        return RegisterClassExA(cast<void*>(&wc))
+    }
+    return 0
+}
+
+// =========================================================================
+// Wrappers: window lifecycle
+// =========================================================================
+
+// Create a standard, visible top-level window of the given class. The class
+// must have been registered first. Returns the HWND (0 on failure).
+export fun create_window(text class_name, text title, i32 width, i32 height,
+                         u64 instance) -> u64 {
+    unsafe {
+        // WS_OVERLAPPEDWINDOW | WS_VISIBLE
+        return CreateWindowExA(0, cast<void*>(class_name), cast<void*>(title),
+                               0x10CF0000, cw_usedefault(), cw_usedefault(),
+                               width, height, 0, 0, instance, 0)
+    }
+    return 0
+}
+
+// Full-control window creation (explicit ex-style / style / position / parent).
+export fun create_window_ex(u32 ex_style, text class_name, text title, u32 style,
+                            i32 x, i32 y, i32 width, i32 height,
+                            u64 parent, u64 instance) -> u64 {
+    unsafe {
+        return CreateWindowExA(ex_style, cast<void*>(class_name), cast<void*>(title),
+                               style, x, y, width, height, parent, 0, instance, 0)
+    }
+    return 0
+}
+
+export fun destroy_window(u64 hwnd) -> void {
+    unsafe {
+        DestroyWindow(hwnd)
+    }
+}
+
+// Set the window's show state (use the sw_* accessors).
+export fun show(u64 hwnd, i32 cmd) -> void {
+    unsafe {
+        ShowWindow(hwnd, cmd)
+    }
+}
+
+// Show the window normally (SW_SHOWNORMAL).
+export fun show_default(u64 hwnd) -> void {
+    unsafe {
+        ShowWindow(hwnd, 1)
+    }
+}
+
+// Force an immediate WM_PAINT.
+export fun update(u64 hwnd) -> void {
+    unsafe {
+        UpdateWindow(hwnd)
+    }
+}
+
+// Default message handling; call this for messages your WNDPROC ignores.
+export fun def_window_proc(u64 hwnd, u32 msg, u64 wparam, i64 lparam) -> i64 {
+    unsafe {
+        return DefWindowProcA(hwnd, msg, wparam, lparam)
+    }
+    return 0
+}
+
+// Post WM_QUIT so the message loop exits with the given code.
+export fun post_quit(i32 code) -> void {
+    unsafe {
+        PostQuitMessage(code)
+    }
+}
+
+// =========================================================================
+// Message loop
+//
+// run_message_loop() runs the standard blocking loop until WM_QUIT. For a
+// custom loop (e.g. a game tick), allocate `u8[48]` (== msg_size()) and drive
+// get_message()/peek_message() + translate_message()/dispatch_message()
+// yourself, reading fields with the msg_* accessors.
+// =========================================================================
+
+// Standard blocking loop: GetMessage -> Translate -> Dispatch until WM_QUIT.
+// Returns 0 (the WM_QUIT exit code path is handled by the OS / your WNDPROC).
+export fun run_message_loop() -> i32 {
+    Msg msg
+    unsafe {
+        void* p = cast<void*>(&msg)
+        i32 status = GetMessageA(p, 0, 0, 0)
+        while status > 0 {
+            TranslateMessage(p)
+            DispatchMessageA(p)
+            status = GetMessageA(p, 0, 0, 0)
+        }
+    }
+    return 0
+}
+
+// Byte size of a MSG; allocate `u8[48]` for the low-level helpers below.
+export fun msg_size() -> u64 {
+    return 48
+}
+
+// Block for the next message into `msg` (a buffer of msg_size() bytes).
+// Returns >0 for a normal message, 0 at WM_QUIT, -1 on error.
+export fun get_message(u8* msg, u64 hwnd_filter) -> i32 {
+    unsafe {
+        return GetMessageA(cast<void*>(msg), hwnd_filter, 0, 0)
+    }
+    return 0 - 1
+}
+
+// Non-blocking check for a message. `remove` uses pm_remove()/pm_noremove().
+// Returns nonzero when a message was available.
+export fun peek_message(u8* msg, u64 hwnd_filter, u32 remove) -> i32 {
+    unsafe {
+        return PeekMessageA(cast<void*>(msg), hwnd_filter, 0, 0, remove)
+    }
+    return 0
+}
+
+export fun translate_message(u8* msg) -> void {
+    unsafe {
+        TranslateMessage(cast<void*>(msg))
+    }
+}
+
+export fun dispatch_message(u8* msg) -> void {
+    unsafe {
+        DispatchMessageA(cast<void*>(msg))
+    }
+}
+
+// MSG field accessors (read out of a raw msg buffer).
+export fun msg_hwnd(u8* msg) -> u64 {
+    unsafe {
+        u64* p = cast<u64*>(msg)
+        return ~p
+    }
+    return 0
+}
+
+export fun msg_message(u8* msg) -> u32 {
+    unsafe {
+        u32* p = cast<u32*>(cast<u64>(msg) + 8)
+        return ~p
+    }
+    return 0
+}
+
+export fun msg_wparam(u8* msg) -> u64 {
+    unsafe {
+        u64* p = cast<u64*>(cast<u64>(msg) + 16)
+        return ~p
+    }
+    return 0
+}
+
+export fun msg_lparam(u8* msg) -> i64 {
+    unsafe {
+        i64* p = cast<i64*>(cast<u64>(msg) + 24)
+        return ~p
+    }
+    return 0
+}
+
+// =========================================================================
+// Constant accessors
+// =========================================================================
+
+// CW_USEDEFAULT (0x80000000) as a signed int for position/size.
+export fun cw_usedefault() -> i32 {
+    unsafe {
+        return cast<i32>(0x80000000)
+    }
+    return 0
+}
+
+// Window styles.
+export fun ws_overlappedwindow() -> u32 { return 0x00CF0000 }
+export fun ws_visible() -> u32 { return 0x10000000 }
+export fun ws_child() -> u32 { return 0x40000000 }
+export fun ws_border() -> u32 { return 0x00800000 }
+export fun ws_caption() -> u32 { return 0x00C00000 }
+export fun ws_popup() -> u32 { return 0x80000000 }
+
+// Class styles.
+export fun cs_vredraw() -> u32 { return 0x0001 }
+export fun cs_hredraw() -> u32 { return 0x0002 }
+export fun cs_owndc() -> u32 { return 0x0020 }
+
+// ShowWindow commands.
+export fun sw_hide() -> i32 { return 0 }
+export fun sw_shownormal() -> i32 { return 1 }
+export fun sw_show() -> i32 { return 5 }
+export fun sw_showdefault() -> i32 { return 10 }
+
+// PeekMessage remove flags.
+export fun pm_noremove() -> u32 { return 0 }
+export fun pm_remove() -> u32 { return 1 }
+
+// Window messages.
+export fun wm_null() -> u32 { return 0x0000 }
+export fun wm_create() -> u32 { return 0x0001 }
+export fun wm_destroy() -> u32 { return 0x0002 }
+export fun wm_size() -> u32 { return 0x0005 }
+export fun wm_paint() -> u32 { return 0x000F }
+export fun wm_close() -> u32 { return 0x0010 }
+export fun wm_quit() -> u32 { return 0x0012 }
+export fun wm_keydown() -> u32 { return 0x0100 }
+export fun wm_keyup() -> u32 { return 0x0101 }
+export fun wm_char() -> u32 { return 0x0102 }
+export fun wm_lbuttondown() -> u32 { return 0x0201 }
+export fun wm_rbuttondown() -> u32 { return 0x0204 }

@@ -1,0 +1,25 @@
+module main
+
+// Exercises the custom-backend Mach-O object writer: a defined+exported
+// function (`_main`), a second internal call target (`_add`, producing an
+// X86_64_RELOC_BRANCH relocation), an initialized global in __DATA,__data, a
+// zero-initialized global in __DATA,__bss, and a string literal in
+// __TEXT,__const referenced RIP-relative (X86_64_RELOC_SIGNED). Verified by
+// emitting the object, so this fixture only needs to compile + produce a valid
+// .o.
+
+i32 base = 40
+i32 slot
+
+fun add(i32 a, i32 b) -> i32 {
+    return a + b
+}
+
+fun main() -> i32 {
+    text s = "v=$base"
+    i32 r = add(base, 2)
+    unsafe {
+        slot = cast<i32>(s[0])
+    }
+    return r + slot
+}

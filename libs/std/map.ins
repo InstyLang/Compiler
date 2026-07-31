@@ -1,0 +1,148 @@
+// Insty standard library: map
+//
+// StringMap<V>: a generic hash map keyed by NUL-terminated `text`, with values
+// of any scalar/pointer type V. Open-addressed with linear probing and a 0.7
+// load factor; capacities are powers of two. Keys are stored by reference (the
+// map does not copy key bytes), so a key must outlive its entry.
+//
+// Requires a heap allocator (`--allocator runtime` or `external`).
+
+module map
+
+import std::str
+
+export class StringMap<V> {
+    text[] keys      // key pointers (valid where states[i] == 1)
+    V[] values       // values (valid where states[i] == 1)
+    u8[] states      // 0 = empty, 1 = used
+    i64 cap          // capacity (power of two) == keys.len
+    i64 count        // number of live entries
+
+    constructor() {
+        this.cap = 8
+        this.count = 0
+        this.keys = new text[8]
+        this.values = new V[8]
+        this.states = new u8[8]
+        i64 i = 0
+        while i < this.cap {
+            this.states[i] = 0
+            i = i + 1
+        }
+    }
+
+    fun len() -> i64 {
+        return this.count
+    }
+
+    fun is_empty() -> bool {
+        return this.count == 0
+    }
+
+    // Slot holding `key`, or -1 if absent.
+    fun slot_of(text key) -> i64 {
+        if this.count == 0 {
+            return 0 - 1
+        }
+        u64 mask = cast<u64>(this.cap - 1)
+        i64 i = cast<i64>(str.hash(key) & mask)
+        i64 probes = 0
+        while probes < this.cap {
+            if this.states[i] == 0 {
+                return 0 - 1
+            }
+            if this.states[i] == 1 && str.eq(this.keys[i], key) {
+                return i
+            }
+            i = cast<i64>(cast<u64>(i + 1) & mask)
+            probes = probes + 1
+        }
+        return 0 - 1
+    }
+
+    // Insert or overwrite the value for `key`.
+    fun put(text key, V value) -> void {
+        // Grow when load would exceed 0.7 (integer form: 10*(count+1) >= 7*cap).
+        if (this.count + 1) * 10 >= this.cap * 7 {
+            this.grow()
+        }
+        u64 mask = cast<u64>(this.cap - 1)
+        i64 i = cast<i64>(str.hash(key) & mask)
+        loop {
+            if this.states[i] == 0 {
+                this.keys[i] = key
+                this.values[i] = value
+                this.states[i] = 1
+                this.count = this.count + 1
+                return
+            }
+            if this.states[i] == 1 && str.eq(this.keys[i], key) {
+                this.values[i] = value
+                return
+            }
+            i = cast<i64>(cast<u64>(i + 1) & mask)
+        }
+    }
+
+    // True when `key` is present.
+    fun has(text key) -> bool {
+        return this.slot_of(key) >= 0
+    }
+
+    // Value for `key`, or `fallback` when absent.
+    fun get_or(text key, V fallback) -> V {
+        i64 s = this.slot_of(key)
+        if s < 0 {
+            return fallback
+        }
+        return this.values[s]
+    }
+
+    // Pointer to the stored value for `key` (for read or in-place update), or
+    // null when absent. Deref requires an `unsafe` block.
+    fun get_ptr(text key) -> V* {
+        i64 s = this.slot_of(key)
+        if s < 0 {
+            unsafe {
+                return cast<V*>(0)
+            }
+        }
+        return &this.values[s]
+    }
+
+    // Double the capacity and re-insert every live entry.
+    fun grow() -> void {
+        i64 oldCap = this.cap
+        text[] oldKeys = this.keys
+        V[] oldValues = this.values
+        u8[] oldStates = this.states
+
+        this.cap = oldCap * 2
+        this.count = 0
+        this.keys = new text[this.cap]
+        this.values = new V[this.cap]
+        this.states = new u8[this.cap]
+        i64 i = 0
+        while i < this.cap {
+            this.states[i] = 0
+            i = i + 1
+        }
+
+        i = 0
+        while i < oldCap {
+            if oldStates[i] == 1 {
+                this.put(oldKeys[i], oldValues[i])
+            }
+            i = i + 1
+        }
+        delete oldKeys.ptr
+        delete oldValues.ptr
+        delete oldStates.ptr
+    }
+
+    destructor() -> void {
+        delete this.keys.ptr
+        delete this.values.ptr
+        delete this.states.ptr
+    }
+}

@@ -1,0 +1,8 @@
+module main
+
+fun main() -> i32 {
+    u128 big = cast<u128>(1) << 64
+    big = big + cast<u128>(5)
+    u64 lo = cast<u64>(big)
+    return cast<i32>(lo)
+}

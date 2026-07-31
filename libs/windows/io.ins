@@ -1,0 +1,135 @@
+// Insty standard library: windows::io
+//
+// Console input and output for the x86_64_windows target, built on the
+// kernel32.dll standard handles. No libc: writes go straight through
+// WriteFile / ReadFile against the std handles.
+//
+// Usage:
+//     import windows::io
+//
+//     fun main() -> i32 {
+//         windows.print("Hello from Win32\n")
+//         windows.println_int(42)
+//         return 0
+//     }
+
+module windows
+
+import std::str
+
+extern fun [dll("kernel32.dll")] GetStdHandle(i32 nStdHandle) -> u64
+
+extern fun [dll("kernel32.dll")] WriteFile(
+    u64 hFile,
+    void* lpBuffer,
+    u32 nNumberOfBytesToWrite,
+    u32* lpNumberOfBytesWritten,
+    void* lpOverlapped
+) -> bool
+
+extern fun [dll("kernel32.dll")] ReadFile(
+    u64 hFile,
+    void* lpBuffer,
+    u32 nNumberOfBytesToRead,
+    u32* lpNumberOfBytesRead,
+    void* lpOverlapped
+) -> bool
+
+// =========================================================================
+// Low-level handle write
+// =========================================================================
+
+// Write `len` bytes from `buffer` to the given handle (a std handle or an
+// open file). Returns the number of bytes actually written.
+export fun write_handle(u64 handle, void* buffer, u32 len) -> u32 {
+    u32 written = 0
+    unsafe {
+        WriteFile(handle, buffer, len, &written, cast<void*>(0))
+    }
+    return written
+}
+
+// =========================================================================
+// Console output
+// =========================================================================
+
+// Write a NUL-terminated string to stdout (no trailing newline).
+export fun print(text s) -> void {
+    unsafe {
+        u64 h = GetStdHandle(0 - 11)
+        write_handle(h, cast<void*>(s), cast<u32>(str.len(s)))
+    }
+}
+
+// Write a NUL-terminated string to stdout followed by a newline.
+export fun println(text s) -> void {
+    print(s)
+    print("\n")
+}
+
+// Write a NUL-terminated string to stderr (no trailing newline).
+export fun eprint(text s) -> void {
+    unsafe {
+        u64 h = GetStdHandle(0 - 12)
+        write_handle(h, cast<void*>(s), cast<u32>(str.len(s)))
+    }
+}
+
+// Write a NUL-terminated string to stderr followed by a newline.
+export fun eprintln(text s) -> void {
+    eprint(s)
+    eprint("\n")
+}
+
+// Write a signed integer in decimal to stdout (no trailing newline).
+export fun print_int(i64 n) -> void {
+    u8[32] buf;
+    unsafe {
+        u8* p = cast<u8*>(&buf)
+        i64 i = 31
+        i64 v = n
+        bool neg = false
+        if v < 0 {
+            neg = true
+            v = 0 - v
+        }
+        if v == 0 {
+            p[i] = 48
+            i = i - 1
+        }
+        while v > 0 {
+            p[i] = cast<u8>(48 + (v - (v / 10) * 10))
+            v = v / 10
+            i = i - 1
+        }
+        if neg {
+            p[i] = 45
+            i = i - 1
+        }
+        i64 start = i + 1
+        u64 h = GetStdHandle(0 - 11)
+        write_handle(h, cast<void*>(cast<i64>(p) + start), cast<u32>(32 - start))
+    }
+}
+
+// Write a signed integer in decimal to stdout followed by a newline.
+export fun println_int(i64 n) -> void {
+    print_int(n)
+    print("\n")
+}
+
+// =========================================================================
+// Console input
+// =========================================================================
+
+// Read up to `len` bytes from stdin into `buffer`. Returns the number of
+// bytes read (0 on EOF / error).
+export fun read_stdin(void* buffer, u32 len) -> u32 {
+    u32 got = 0
+    unsafe {
+        u64 h = GetStdHandle(0 - 10)
+        ReadFile(h, buffer, len, &got, cast<void*>(0))
+    }
+    return got
+}
+

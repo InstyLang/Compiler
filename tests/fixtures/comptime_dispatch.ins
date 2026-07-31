@@ -1,0 +1,107 @@
+module main
+
+// Compile-time target dispatch.
+//
+// `#if` selects between blocks before semantic analysis, so a branch that is not
+// taken is never type-checked and never reaches code generation. That is what
+// makes this file compile everywhere: the asm block below cannot be lowered on
+// wasm at all, and the WASI import does not exist on x86-64, yet both appear
+// here.
+//
+// Returns 42 on every target; the differential test checks that the two backends
+// agree, which they can only do if each picked its own branch.
+
+// Only ever called from the branch that matches its platform.
+extern fun [dll("wasi_snapshot_preview1")] fd_write(
+    i32 fd, u8* iovs, i32 iovs_len, u32* nwritten) -> i32
+
+// A three-way chain, exercising `#if` / `#else if` / `#else`.
+fun family() -> i32 {
+    #if @targetIs("wasm") {
+        return 10
+    } #else if @targetIs("windows") {
+        return 20
+    } #else {
+        return 30
+    }
+}
+
+// The untaken branch may contain something the target cannot express.
+fun unbuildable() -> i32 {
+    #if @targetIs("wasm") {
+        return 2
+    } #else {
+        unsafe {
+            // Impossible to lower on wasm, and never compiled there.
+            asm [keep(rax)](
+                mov rax, 39
+                syscall
+            )
+        }
+        return 2
+    }
+}
+
+// Boolean operators and negation fold too, and && short-circuits so the
+// right-hand side is not required to make sense elsewhere.
+fun operators() -> i32 {
+    i32 r = 0
+    #if !@targetIs("nonsense-target") {
+        r = r + 1
+    }
+    #if @targetIs("wasm") || @targetIs("x86_64") {
+        r = r + 2
+    }
+    #if @targetIs("wasm") && @targetIs("wasm32") {
+        r = r + 4
+    } #else {
+        r = r + 8
+    }
+    return r
+}
+
+// Nesting: a conditional inside the taken branch of another.
+fun nested() -> i32 {
+    #if @targetIs("wasm") {
+        #if @targetIs("wasi") {
+            return 100
+        } #else {
+            return 200
+        }
+    } #else {
+        return 300
+    }
+}
+
+fun main() -> i32 {
+    // family + unbuildable normalise away the per-target difference, so every
+    // target must produce the same total.
+    i32 total = unbuildable()          // 2
+
+    i32 f = family()
+    #if @targetIs("wasm") {
+        total = total + f - 10         // +0
+    } #else if @targetIs("windows") {
+        total = total + f - 20
+    } #else {
+        total = total + f - 30
+    }
+
+    i32 o = operators()                // wasm: 1+2+4 = 7 ; others: 1+2+8 = 11
+    #if @targetIs("wasm") {
+        total = total + o + 4          // 2 + 7 + 4  = 13
+    } #else {
+        total = total + o              // 2 + 11     = 13
+    }
+
+    i32 n = nested()
+    #if @targetIs("wasm") {
+        total = total + n - 71         // 13 + 100 - 71 = 42
+    } #else {
+        total = total + n - 271        // 13 + 300 - 271 = 42
+    }
+
+    return total
+}
+
+

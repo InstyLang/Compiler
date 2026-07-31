@@ -1,0 +1,23 @@
+module import_meta_dep
+
+export enum Mode {
+    Low = 5,
+    High = 37
+}
+
+export class Gauge {
+    i32 value
+    constructor(i32 initial) {
+        this.value = initial
+    }
+    fun add(i32 amount) -> i32 {
+        return this.value + amount
+    }
+    operator +(Gauge rhs) -> i32 {
+        return this.value + rhs.value
+    }
+}
+
+export fun enum_pick(Mode mode) -> i32 {
+    return mode
+}

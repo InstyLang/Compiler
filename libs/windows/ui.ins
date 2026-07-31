@@ -1,0 +1,112 @@
+// Insty standard library: windows::ui
+//
+// Minimal user-interface helpers for the x86_64_windows target: message
+// boxes and the system beep, from user32.dll.
+//
+// Usage:
+//     import windows::ui
+//
+//     fun main() -> i32 {
+//         if windows.confirm("Continue?", "Insty") {
+//             windows.message_info("Off we go", "Insty")
+//         }
+//         return 0
+//     }
+
+module windows
+
+extern fun [dll("user32.dll")] MessageBoxA(
+    u64 hWnd,
+    void* lpText,
+    void* lpCaption,
+    u32 uType
+) -> i32
+
+extern fun [dll("user32.dll")] MessageBeep(u32 uType) -> bool
+
+// =========================================================================
+// Message boxes
+// =========================================================================
+
+// Show a simple OK message box. Returns the pressed-button id (IDOK = 1).
+export fun message_box(text textBody, text caption) -> i32 {
+    unsafe {
+        // MB_OK = 0.
+        return MessageBoxA(0, cast<void*>(textBody), cast<void*>(caption), 0)
+    }
+    return 0
+}
+
+// Show a message box with explicit flags (an MB_* button set OR'd with an
+// MB_ICON* value; see the accessors below). Returns the pressed-button id.
+export fun message_box_ex(text textBody, text caption, u32 flags) -> i32 {
+    unsafe {
+        return MessageBoxA(0, cast<void*>(textBody), cast<void*>(caption), flags)
+    }
+    return 0
+}
+
+// Show an informational message box (info icon, OK button).
+export fun message_info(text textBody, text caption) -> i32 {
+    // MB_OK | MB_ICONINFORMATION = 0x40.
+    return message_box_ex(textBody, caption, 0x00000040)
+}
+
+// Show a warning message box (warning icon, OK button).
+export fun message_warn(text textBody, text caption) -> i32 {
+    // MB_OK | MB_ICONWARNING = 0x30.
+    return message_box_ex(textBody, caption, 0x00000030)
+}
+
+// Show an error message box (error icon, OK button).
+export fun message_error(text textBody, text caption) -> i32 {
+    // MB_OK | MB_ICONERROR = 0x10.
+    return message_box_ex(textBody, caption, 0x00000010)
+}
+
+// Show a Yes/No question. Returns true when the user chose Yes (IDYES = 6).
+export fun confirm(text textBody, text caption) -> bool {
+    // MB_YESNO | MB_ICONQUESTION = 0x24.
+    i32 reply = message_box_ex(textBody, caption, 0x00000024)
+    return reply == 6
+}
+
+// =========================================================================
+// Sound
+// =========================================================================
+
+// Play the system default beep. Returns true on success.
+export fun beep() -> bool {
+    unsafe {
+        // MB_OK beep type = 0.
+        return MessageBeep(0)
+    }
+    return false
+}
+
+// =========================================================================
+// Constant accessors
+// =========================================================================
+
+// MessageBox button-set flags (uType).
+export fun mb_ok() -> u32 { return 0x00000000 }
+export fun mb_okcancel() -> u32 { return 0x00000001 }
+export fun mb_abortretryignore() -> u32 { return 0x00000002 }
+export fun mb_yesnocancel() -> u32 { return 0x00000003 }
+export fun mb_yesno() -> u32 { return 0x00000004 }
+export fun mb_retrycancel() -> u32 { return 0x00000005 }
+
+// MessageBox icon flags (uType).
+export fun mb_iconerror() -> u32 { return 0x00000010 }
+export fun mb_iconquestion() -> u32 { return 0x00000020 }
+export fun mb_iconwarning() -> u32 { return 0x00000030 }
+export fun mb_iconinformation() -> u32 { return 0x00000040 }
+
+// MessageBox return values (which button was clicked).
+export fun id_ok() -> i32 { return 1 }
+export fun id_cancel() -> i32 { return 2 }
+export fun id_abort() -> i32 { return 3 }
+export fun id_retry() -> i32 { return 4 }
+export fun id_ignore() -> i32 { return 5 }
+export fun id_yes() -> i32 { return 6 }
+export fun id_no() -> i32 { return 7 }

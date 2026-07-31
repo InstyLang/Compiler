@@ -1,0 +1,29 @@
+module main
+
+// Growable string builder: std::string.String. Exercises append(text),
+// append_int (incl. negative), push(byte), reserve/grow, len, byte_at, and
+// cstr()/as_bytes(). Returns 42.
+
+import std::string
+import std::str
+
+fun main() -> i32 {
+    String s = String()
+    s.append("val=")
+    s.append_int(0 - 128)      // "-128"
+    s.push(33)                 // '!'
+    // Content is now "val=-128!" (9 bytes).
+    i32 total = cast<i32>(s.len())         // 9
+
+    // cstr() must be a NUL-terminated, str-compatible view.
+    total = total + cast<i32>(str.len(s.cstr()))   // + 9 = 18
+
+    // Spot-check a couple of bytes.
+    if s.byte_at(0) == 118 {   // 'v'
+        total = total + 20     // 38
+    }
+    if s.byte_at(8) == 33 {    // '!'
+        total = total + 4      // 42
+    }
+    return total
+}

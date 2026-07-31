@@ -1,0 +1,10 @@
+module strongdef
+
+// A strong (ordinary external) definition of `wfn`, linked alongside weak_def to
+// verify the weak default is overridden. `[name(wfn)]` pins the link symbol so it
+// matches the weak external emitted by weak_def.ins.
+
+[name(wfn)]
+fun strong_wfn() -> i32 {
+    return 99
+}

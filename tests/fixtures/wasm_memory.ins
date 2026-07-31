@@ -1,0 +1,103 @@
+module main
+
+// Linear-memory coverage for the WebAssembly backend.
+//
+// wasm has no addressable native stack, so anything whose address is observable
+// has to live in linear memory reached through a shadow-stack pointer, while
+// values that are never addressed stay in wasm locals. These functions exercise
+// both sides of that split, plus the static data region.
+
+struct Point {
+    i32 x,
+    i32 y
+}
+
+// Folded constant initializer: real bytes in a data segment.
+i32 MAGIC = 1 << 12
+
+// No constant initializer: address space only. wasm zeroes memory on
+// instantiation, so this needs no bytes in the module at all.
+i32 ZEROED
+
+// Taking a local's address forces its slot out of a wasm local and into the
+// frame, because a store through the pointer has to be visible to the load.
+fun viaptr(i32 v) -> i32 {
+    i32 local = v
+    i32* p = &local
+    unsafe {
+        ~p = ~p + 1
+    }
+    return local
+}
+
+// Struct field access: offsets folded into the access's static offset.
+fun structsum(i32 a, i32 b) -> i32 {
+    Point pt
+    pt.x = a
+    pt.y = b
+    return pt.x + pt.y
+}
+
+// Array indexing by a runtime value: a scaled-index address computation, which
+// x86 folds into one SIB lea and wasm has to spell out.
+fun arrsum(i32 n) -> i32 {
+    i32[4] a
+    a[0] = 1
+    a[1] = 2
+    a[2] = 3
+    a[3] = n
+    i32 total = 0
+    for i in 0..4 {
+        total = total + a[i]
+    }
+    return total
+}
+
+// Slices: a fat pointer whose .ptr and .len both come out of memory.
+fun slicelen() -> i32 {
+    i32[5] a
+    a[0] = 10
+    a[1] = 20
+    a[2] = 30
+    a[3] = 40
+    a[4] = 50
+    i32[] s = a
+    i32[] sub = s[1..4]
+    i32 total = 0
+    for x in sub {
+        total = total + x
+    }
+    return total + cast<i32>(sub.len)
+}
+
+fun getmagic() -> i32 {
+    return MAGIC
+}
+
+fun getzero() -> i32 {
+    return ZEROED
+}
+
+fun setget(i32 v) -> i32 {
+    ZEROED = v
+    return ZEROED + MAGIC
+}
+
+// String literals live in the data region; their address is materialized by
+// Lea(symbol). Identical literals across functions share one placement.
+fun strbytes() -> i32 {
+    text s = "Az9"
+    unsafe {
+        return cast<i32>(s[0]) + cast<i32>(s[1]) + cast<i32>(s[2])
+    }
+}
+
+fun main() -> i32 {
+    i32[4] a
+    a[0] = 20
+    a[1] = 22
+    Point pt
+    pt.x = a[0]
+    pt.y = a[1]
+    return pt.x + pt.y
+}

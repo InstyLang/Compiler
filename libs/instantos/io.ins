@@ -1,0 +1,101 @@
+// Insty standard library: instantos::io
+//
+// Console input/output for the x86_64_instantos target, built directly on
+// the InstantOS write/read syscalls (numbers 3 and 4). No mlibc stdio
+// dependency: bytes go straight to the kernel via std::syscall using the
+// InstantOS register convention.
+//
+// Usage:
+//     import instantos::io
+//
+//     fun main() -> i32 {
+//         instantos.print("hello\n")
+//         instantos.println_int(42)
+//         return 0
+//     }
+
+module instantos
+
+import std::str
+
+// Kernel entry: the register convention lives in std::syscall, not here.
+import std::syscall
+
+// Write a NUL-terminated string to stdout (fd 1), no trailing newline.
+export fun print(text s) -> void {
+    unsafe {
+        syscall.sys3(3, 1, cast<i64>(s), cast<i64>(str.len(s)))
+    }
+}
+
+// Write a NUL-terminated string to stdout followed by a newline.
+export fun println(text s) -> void {
+    print(s)
+    unsafe {
+        syscall.sys3(3, 1, cast<i64>("\n"), 1)
+    }
+}
+
+// Write a NUL-terminated string to stderr (fd 2), no trailing newline.
+export fun eprint(text s) -> void {
+    unsafe {
+        syscall.sys3(3, 2, cast<i64>(s), cast<i64>(str.len(s)))
+    }
+}
+
+// Write a NUL-terminated string to stderr followed by a newline.
+export fun eprintln(text s) -> void {
+    eprint(s)
+    unsafe {
+        syscall.sys3(3, 2, cast<i64>("\n"), 1)
+    }
+}
+
+// Write a signed integer in decimal to stdout (no trailing newline).
+export fun print_int(i64 n) -> void {
+    u8[32] buf;
+    unsafe {
+        u8* p = cast<u8*>(&buf)
+        i64 i = 31
+        i64 v = n
+        bool neg = false
+        if v < 0 {
+            neg = true
+            v = 0 - v
+        }
+        if v == 0 {
+            p[i] = 48
+            i = i - 1
+        }
+        while v > 0 {
+            p[i] = cast<u8>(48 + (v - (v / 10) * 10))
+            v = v / 10
+            i = i - 1
+        }
+        if neg {
+            p[i] = 45
+            i = i - 1
+        }
+        i64 start = i + 1
+        syscall.sys3(3, 1, cast<i64>(p) + start, 32 - start)
+    }
+}
+
+// Write a signed integer in decimal to stdout followed by a newline.
+export fun println_int(i64 n) -> void {
+    print_int(n)
+    unsafe {
+        syscall.sys3(3, 1, cast<i64>("\n"), 1)
+    }
+}
+
+// Read up to `len` bytes from stdin (fd 0) into `buffer`. Returns the byte
+// count read (0 at EOF), or a negative errno. Call from an unsafe context.
+export fun read_stdin(void* buffer, i64 len) -> i64 {
+    unsafe {
+        return syscall.sys3(4, 0, cast<i64>(buffer), len)
+    }
+    return 0
+}
+
+

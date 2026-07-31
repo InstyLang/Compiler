@@ -38,6 +38,20 @@ void Checker::declarePrepass(const std::shared_ptr<AST::ProgramRoot>& program) {
         }
     }
 
+    // A tagged-union enum is represented as an aggregate, so pre-register its
+    // name as a Struct (overriding the Enum registration above) before field/
+    // payload types are resolved -- this lets a variant payload reference the
+    // enum itself (e.g. `Add(Expr*, Expr*)`).
+    for (const auto& node : program->body) {
+        if (!node || node->nodeType() != AST::NodeType::EnumDeclaration) continue;
+        auto* e = static_cast<AST::EnumDeclaration*>(node.get());
+        bool isSum = false;
+        for (const auto& v : e->variants) {
+            if (!v.payloadTypes.empty()) { isSum = true; break; }
+        }
+        if (isSum) types_.registerNamed(e->name, Types::Kind::Struct);
+    }
+
     for (const auto& node : program->body) {
         if (!node) continue;
         switch (node->nodeType()) {
@@ -83,11 +97,67 @@ void Checker::declareStruct(AST::StructDeclaration* node) {
 
 void Checker::declareEnum(AST::EnumDeclaration* node) {
     if (!node) return;
+
+    bool isSum = false;
+    for (const auto& v : node->variants) {
+        if (!v.payloadTypes.empty()) { isSum = true; break; }
+    }
+    if (isSum) {
+        // Tagged union: represent it as an aggregate struct (empty field list; the
+        // backend computes the tag+payload layout from the SumTypeInfo below).
+        StructInfo sinfo;
+        sinfo.name = node->name;
+        sinfo.isExported = node->isExported;
+        result_.structs.push_back(sinfo);
+        classFields_[node->name] = {};
+
+        SumTypeInfo st;
+        st.name = node->name;
+        st.isExported = node->isExported;
+        long long tag = 0;
+        for (const auto& v : node->variants) {
+            SumVariant sv;
+            sv.name = v.name;
+            sv.tag = tag++;
+            for (const auto& spelling : v.payloadTypes) {
+                Types::TypeRef ft = resolveTypeSpelling(spelling, node);
+                // MVP: payloads are scalar / pointer / text values (<= 8 bytes),
+                // which keeps construction/match to single loads/stores and lets a
+                // variant reference the enum by pointer (`Expr*`). Reject by-value
+                // aggregates and 128-bit scalars.
+                if (ft && !ft->isError()) {
+                    bool ok = ft->kind == Types::Kind::Pointer ||
+                              ft->kind == Types::Kind::Text ||
+                              ft->kind == Types::Kind::Bool ||
+                              ft->kind == Types::Kind::Enum ||
+                              (ft->kind == Types::Kind::Int && ft->bitWidth <= 64) ||
+                              (ft->kind == Types::Kind::Float && ft->bitWidth <= 64);
+                    if (!ok) {
+                        emit("E2017",
+                             "unsupported payload type '" + types_.toString(ft) +
+                                 "' in variant '" + v.name + "' of '" + node->name + "'",
+                             node,
+                             "sum-type payloads must be scalars, pointers, or text "
+                             "(use a pointer for aggregates or recursion)");
+                    }
+                }
+                sv.payload.push_back(ft);
+            }
+            st.variants.push_back(std::move(sv));
+        }
+        result_.sumTypes.push_back(std::move(st));
+        return;
+    }
+
     EnumInfo info;
     info.name = node->name;
     info.isExported = node->isExported;
     std::string underlying = node->underlyingType.empty() ? "i32" : node->underlyingType;
     info.underlying = resolveTypeSpelling(underlying, node);
+    if (info.underlying && !info.underlying->isError()) {
+        types_.registerEnumUnderlying(node->name, info.underlying->bitWidth,
+                                      info.underlying->isSigned);
+    }
     Types::TypeRef enumType = types_.namedType(Types::Kind::Enum, node->name);
     long long next = 0;
     for (const auto& v : node->variants) {
@@ -104,6 +174,7 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
 
     if (!node->genericParams.empty()) {
         genericClassTemplates_[node->name] = node;
+        result_.genericClassTemplates.push_back(node);
         return;
     }
 
@@ -128,6 +199,25 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
     Types::TypeRef classPtr = types_.pointerType(classType);
 
     for (auto& m : node->methods) {
+        if (m.isDestructor) {
+            if (!m.parameters.empty()) {
+                emit("E1501", "destructor for class '" + node->name + "' cannot take parameters",
+                     node, "declare it exactly as `destructor() -> void`");
+            }
+            if (!m.hasExplicitReturnType) {
+                emit("E1501", "destructor for class '" + node->name +
+                               "' must explicitly return void",
+                     node, "declare it exactly as `destructor() -> void`");
+            } else {
+                Types::TypeRef dtorRet = resolveTypeSpelling(m.returnType, node);
+                if (!dtorRet || !dtorRet->isVoid()) {
+                    emit("E1501", "destructor for class '" + node->name +
+                                   "' must return void",
+                         node, "declare it exactly as `destructor() -> void`");
+                }
+            }
+        }
+
         std::vector<std::string> paramTypeSpellings;
         std::vector<Types::TypeRef> paramTypes;
         std::vector<std::string> paramNames;
@@ -148,8 +238,9 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
         fi.mangledName = mangled;
         fi.paramTypes = paramTypes;
         fi.paramNames = paramNames;
-        fi.returnType = m.isConstructor ? types_.voidType()
-                                        : resolveTypeSpelling(m.returnType, node);
+        fi.returnType = (m.isConstructor || m.isDestructor)
+                            ? types_.voidType()
+                            : resolveTypeSpelling(m.returnType, node);
         fi.isExternal = false;
         fi.isExported = node->isExported;
         fi.decl = nullptr;
@@ -158,6 +249,8 @@ void Checker::declareClass(AST::ClassDeclaration* node) {
         if (m.isConstructor) {
             cinfo.constructorMangled = mangled;
             cinfo.constructorParams.assign(paramTypes.begin() + 1, paramTypes.end());
+        } else if (m.isDestructor) {
+            cinfo.destructorMangled = mangled;
         } else if (m.isOperator) {
             cinfo.operatorMangled[m.operatorSymbol] = mangled;
         } else {
@@ -181,7 +274,7 @@ void Checker::checkClassMethod(const std::string& className, Types::TypeRef clas
 
     currentThis_ = classPtr;
     currentClass_ = className;
-    currentReturn_ = method.isConstructor
+    currentReturn_ = (method.isConstructor || method.isDestructor)
                          ? types_.voidType()
                          : resolveTypeSpelling(method.returnType, nullptr);
     inUnsafe_ = false;
@@ -207,7 +300,12 @@ void Checker::declareGlobal(AST::VariableDeclarationExpr* node) {
     info.name = node->identifier;
     info.isConst = node->isConst;
     info.isExported = node->isExported;
-    if (!node->typeHint.empty()) {
+    if (node->typeHint == "auto") {
+        emit("E2006", "'auto' is not allowed for module-level globals; give '" +
+                          node->identifier + "' an explicit type",
+             node, "type inference is only available for local variables");
+        info.type = types_.errorType();
+    } else if (!node->typeHint.empty()) {
         info.type = resolveTypeSpelling(node->typeHint, node);
         if (node->isArray && info.type && !info.type->isError() &&
             info.type->kind != Types::Kind::Array &&
@@ -263,6 +361,7 @@ void Checker::declareFunction(AST::FunctionDeclaration* node) {
 
     if (!node->genericParams.empty()) {
         genericTemplates_[node->name] = node;
+        result_.genericFunctionTemplates.push_back(node);
         return;
     }
 

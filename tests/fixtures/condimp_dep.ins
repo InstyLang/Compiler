@@ -1,0 +1,8 @@
+module condimp_dep
+
+// Imported only by the branch that targets wasm, so on every other target this
+// file must never be resolved, parsed or compiled.
+
+export fun answer() -> i32 {
+    return 42
+}

@@ -25,7 +25,12 @@ public:
 
     void run(const std::shared_ptr<AST::ProgramRoot>& program,
              const std::vector<FunctionInfo>& importedFunctions,
-             const std::vector<StructInfo>& importedStructs);
+             const std::vector<StructInfo>& importedStructs,
+             const std::vector<ClassInfo>& importedClasses,
+             const std::vector<EnumInfo>& importedEnums,
+             const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
+             const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
+             const std::vector<SumTypeInfo>& importedSumTypes = {});
 
     void declarePrepass(const std::shared_ptr<AST::ProgramRoot>& program);
     void declareStruct(AST::StructDeclaration* node);
@@ -62,10 +67,17 @@ public:
     void checkAssignment(AST::AssignmentExpr* node);
     void checkIf(AST::IfStatement* node);
     void checkWhile(AST::WhileLoop* node);
+    void checkFor(AST::ForLoop* node);
     void checkLoop(AST::InfiniteLoop* node);
     void checkWhen(AST::WhenStatement* node);
     void checkSwitch(AST::SwitchStatement* node);
+    void checkMatch(AST::MatchStatement* node);
     void checkReturn(AST::ReturnStatement* node);
+    const SumTypeInfo* sumTypeByName(const std::string& name) const;
+    // If `node` is a sum-variant construction/reference `E.Variant`, returns the
+    // sum type (and the variant via `outVariant`); otherwise nullptr.
+    const SumTypeInfo* asSumVariantAccess(const AST::MemberAccessExpr* m,
+                                          const SumVariant** outVariant) const;
     void checkUnsafe(AST::UnsafeBlock* node);
 
     Types::TypeRef checkIdentifier(AST::IdentifierExpr* node);
@@ -79,16 +91,21 @@ public:
                             Types::TypeRef& out);
     Types::TypeRef checkBuiltin(AST::BuiltinCallExpr* node);
     Types::TypeRef checkCast(AST::CastExpr* node);
+    Types::TypeRef checkLambda(AST::LambdaExpr* node);
     Types::TypeRef checkAddressOf(AST::AddressOfExpr* node);
     Types::TypeRef checkDeref(AST::DereferenceExpr* node);
     Types::TypeRef checkMember(AST::MemberAccessExpr* node);
     Types::TypeRef checkIndex(AST::MemberAccessExpr* node);
+    Types::TypeRef checkSlice(AST::SliceExpr* node);
     void checkInterpolation(AST::StringLiteral* node);
     bool isFormattable(Types::TypeRef t);
 
     Types::TypeRef resolveTypeSpelling(const std::string& spelling, const AST::ExprAST* at);
     bool isAssignable(Types::TypeRef target, Types::TypeRef value, bool valueIsLiteral);
+    bool isSliceInitializer(Types::TypeRef target, Types::TypeRef value,
+                            const AST::NodePtr& valueNode);
     Types::TypeRef enumUnderlying(Types::TypeRef t) const;
+    const FunctionInfo* findFunctionByMangled(const std::string& mangled) const;
     Types::TypeRef arithResult(Types::TypeRef a, Types::TypeRef b);
     bool isLValue(const AST::NodePtr& node);
     bool blockReturns(const AST::NodeList& body);
@@ -114,7 +131,7 @@ private:
 
     std::vector<Scope> scopes_;
 
-    std::multimap<std::string, const FunctionInfo*> functionTable_;
+    std::multimap<std::string, FunctionInfo> functionTable_;
     std::vector<FunctionInfo> importedStore_;
 
     std::map<std::string, AST::FunctionDeclaration*> genericTemplates_;
@@ -138,6 +155,14 @@ private:
     const FunctionInfo* currentFn_ = nullptr;
     Types::TypeRef currentReturn_ = nullptr;
     bool inUnsafe_ = false;
+
+    // Return-type inference for `auto`-return functions (used by lambdas): when
+    // set, the returned values' types are unified into the return type. A
+    // concrete (non-literal) type wins over an integer-literal-derived one, and
+    // integers widen to the larger width.
+    bool inferReturn_ = false;
+    Types::TypeRef inferredReturn_ = nullptr;
+    bool inferredFromLiteral_ = false;
 
     std::unordered_map<const AST::ExprAST*, bool> errored_;
 };

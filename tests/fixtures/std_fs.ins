@@ -1,0 +1,24 @@
+module main
+
+// Hosted-Linux file I/O round-trip: std::fs.write_file then read_file, built on
+// the String builder. Writes 42 bytes and reads them back. Returns 42.
+
+import std::fs
+import std::string
+
+fun main() -> i32 {
+    String payload = String()
+    // Build a 42-byte payload: "0123456789" x4 + "01" = 42 bytes.
+    i64 r = 0
+    while r < 4 {
+        payload.append("0123456789")
+        r = r + 1
+    }
+    payload.append("01")                    // total 42 bytes
+
+    if !fs.write_file("std_fs_roundtrip.tmp", payload.as_bytes()) {
+        return 1
+    }
+    String back = fs.read_file("std_fs_roundtrip.tmp")
+    return cast<i32>(back.len())            // 42
+}

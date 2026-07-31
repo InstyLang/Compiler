@@ -370,6 +370,22 @@ std::string machoArchFor(const Targeting::TargetSpec& target) {
 }
 
 std::string defaultLinkerName(const Targeting::TargetSpec& target) {
+    // On Windows, CreateProcess only auto-appends ".exe" when the program name
+    // has no extension. "ld.lld" / "ld64.lld" already contain a '.', so the
+    // ".lld" is mistaken for an extension and the lookup fails; spell the ".exe"
+    // explicitly. "lld-link" has no dot and resolves fine, but we suffix it too
+    // for consistency.
+#if defined(_WIN32)
+    switch (getLinkerFlavor(target)) {
+        case LinkerFlavor::Elf:
+            return "ld.lld.exe";
+        case LinkerFlavor::MachO:
+            return "ld64.lld.exe";
+        case LinkerFlavor::Coff:
+            return "lld-link.exe";
+    }
+    return "";
+#else
     switch (getLinkerFlavor(target)) {
         case LinkerFlavor::Elf:
             return "ld.lld";
@@ -379,6 +395,7 @@ std::string defaultLinkerName(const Targeting::TargetSpec& target) {
             return "lld-link";
     }
     return "";
+#endif
 }
 
 std::string effectiveLinker(const LinkOptions& options) {
@@ -418,13 +435,6 @@ bool wantsMultiboot2(const LinkOptions& options) {
 
 bool supportsMultiboot2Header(const Targeting::TargetSpec& target) {
     return target.isElf() && (target.arch == "x86_64" || target.arch == "i386" || target.arch == "i686" || target.arch == "x86");
-}
-
-std::string multibootTripleFor(const Targeting::TargetSpec& target) {
-    if (target.arch == "x86_64") {
-        return "x86_64-unknown-elf";
-    }
-    return "i386-unknown-elf";
 }
 
 std::optional<fs::path> createMultiboot2HeaderObject(const Targeting::TargetSpec& target, bool verbose) {
@@ -472,23 +482,25 @@ std::optional<fs::path> createMultiboot2HeaderObject(const Targeting::TargetSpec
             << "2:\n";
     asmFile.close();
 
-    std::string llvmMc = toolPathFromEnv("LLVM_MC", "llvm-mc");
+    std::string assembler = toolPathFromEnv("INSTY_AS", "as");
     std::vector<std::string> args = {
-        llvmMc,
-        "-triple",
-        multibootTripleFor(target),
-        "-filetype=obj",
-        asmPath.string(),
-        "-o",
-        objPath.string()
+        assembler
     };
+    if (target.arch == "x86_64") {
+        args.push_back("--64");
+    } else {
+        args.push_back("--32");
+    }
+    args.push_back(asmPath.string());
+    args.push_back("-o");
+    args.push_back(objPath.string());
 
     if (verbose) {
         std::cout << "Generating Multiboot2 header: " << formatCommand(args) << "\n";
     }
 
     if (!runProcess(args)) {
-        std::cerr << "Error: Failed to generate Multiboot2 header object with " << llvmMc << "\n";
+        std::cerr << "Error: Failed to generate Multiboot2 header object with " << assembler << "\n";
         return std::nullopt;
     }
 
@@ -644,6 +656,136 @@ bool linkExecutable(const LinkOptions& options) {
     std::vector<std::string> args;
     args.push_back(linkerName);
 
+    // InstantOS userland: a dynamically-linked PIE on top of mlibc + the
+    // ld-instantos.so runtime loader. We deliberately bypass the generic
+    // hosted-ELF path (which would inject host crt/library discovery) and emit
+    // the exact recipe InstantOS's tools/build-mlibc-hello.sh uses:
+    //
+    //   ld.lld --gc-sections --build-id=none --hash-style=sysv
+    //          -z max-page-size=0x1000 -pie -e _start
+    //          --dynamic-linker /lib/mlibc/ld-instantos.so -rpath /lib/mlibc
+    //          -o out <sysroot>/lib/crt1.o <objects> -L <sysroot>/lib -lc
+    //
+    // crt1.o supplies `_start` and calls our `main`; libc.so is mlibc.
+    if (options.target.isInstantOS) {
+        if (sysroot.empty()) {
+            std::cerr << "Error: InstantOS link requires an mlibc sysroot "
+                         "(set --sysroot or the target's sysroot)\n";
+            return false;
+        }
+        const std::string libDir = sysroot + "/lib";
+        const std::string crt1 = libDir + "/crt1.o";
+        if (!fs::exists(crt1)) {
+            std::cerr << "Error: InstantOS sysroot is missing crt1.o: " << crt1 << "\n";
+            std::cerr << "Build it with InstantOS tools/build-mlibc.sh\n";
+            return false;
+        }
+        const std::string entry = options.entrySymbol.empty() ? "_start" : options.entrySymbol;
+
+        args.push_back("--gc-sections");
+        args.push_back("--build-id=none");
+        args.push_back("--hash-style=sysv");
+        args.push_back("-z");
+        args.push_back("max-page-size=0x1000");
+        args.push_back("-pie");
+        args.push_back("-e");
+        args.push_back(entry);
+        args.push_back("--dynamic-linker");
+        args.push_back(dynamicLinker.empty() ? "/lib/mlibc/ld-instantos.so" : dynamicLinker);
+        args.push_back("-rpath");
+        args.push_back("/lib/mlibc");
+        args.push_back("-o");
+        args.push_back(options.outputFile);
+        args.push_back(crt1);
+        for (const auto& obj : linkObjects) {
+            args.push_back(obj);
+        }
+        args.push_back("-L" + libDir);
+        for (const auto& path : options.libraryPaths) {
+            args.push_back("-L" + path);
+        }
+        args.push_back("-lc");
+        for (const auto& lib : options.libraries) {
+            args.push_back("-l" + lib);
+        }
+
+        if (options.verbose) {
+            std::cout << "Using " << linkerName << " for target " << options.target.cliName << "\n";
+            std::cout << "Linking: " << formatCommand(args) << "\n";
+        }
+        if (!runProcess(args)) {
+            std::cerr << "Linking failed\n";
+            std::cerr << "Make sure " << linkerName << " is installed and in PATH, and the "
+                         "InstantOS mlibc sysroot is complete\n";
+            return false;
+        }
+        return true;
+    }
+
+    // Hosted, dynamically-linked Linux executable. Reached when a plain Linux
+    // build pulled in shared libraries via the `lib(...)` directive (the driver
+    // then clears `freestanding`). The system C runtime provides `_start`, which
+    // sets up argc/argv/env and calls `main` through __libc_start_main, so the
+    // backend emits no `_start` shim for this mode. Recipe (mirrors what a `cc`
+    // driver would run for `cc objs -o out -l<libs>`):
+    //
+    //   ld.lld -m elf_x86_64 --eh-frame-hdr --dynamic-linker <ld.so>
+    //          -o out crt1.o crti.o <objects> -L<sysdirs> -l<libs> -lc crtn.o
+    //
+    if (options.target.isLinux() && !options.freestanding && !rawBinary) {
+        std::string emulation = elfEmulationFor(options.target);
+        if (!emulation.empty()) {
+            args.push_back("-m");
+            args.push_back(emulation);
+        }
+        args.push_back("--eh-frame-hdr");
+        const std::string interp =
+            !dynamicLinker.empty() ? dynamicLinker : std::string("/lib64/ld-linux-x86-64.so.2");
+        args.push_back("--dynamic-linker");
+        args.push_back(interp);
+        args.push_back("-o");
+        args.push_back(options.outputFile);
+
+        // crt1.o + crti.o precede the user objects; crtn.o trails everything.
+        std::string crtn;
+        for (const auto& crt : getSystemCRTFiles()) {
+            if (fs::path(crt).filename() == "crtn.o") {
+                crtn = crt;
+            } else {
+                args.push_back(crt);
+            }
+        }
+        for (const auto& obj : linkObjects) {
+            args.push_back(obj);
+        }
+        for (const auto& path : getSystemLibraryPaths()) {
+            args.push_back("-L" + path);
+        }
+        for (const auto& path : options.libraryPaths) {
+            args.push_back("-L" + path);
+        }
+        for (const auto& lib : options.libraries) {
+            args.push_back("-l" + lib);
+        }
+        args.push_back("-lc");
+        if (!crtn.empty()) {
+            args.push_back(crtn);
+        }
+
+        if (options.verbose) {
+            std::cout << "Using " << linkerName << " for target " << options.target.cliName
+                      << " (hosted dynamic)\n";
+            std::cout << "Linking: " << formatCommand(args) << "\n";
+        }
+        if (!runProcess(args)) {
+            std::cerr << "Linking failed\n";
+            std::cerr << "Make sure " << linkerName << ", the C runtime (crt1.o/crti.o/crtn.o) "
+                         "and the requested libraries are installed and in the linker search path\n";
+            return false;
+        }
+        return true;
+    }
+
     if (flavor == LinkerFlavor::Elf) {
         std::string emulation = elfEmulationFor(options.target);
         if (!emulation.empty()) {
@@ -745,6 +887,9 @@ bool linkExecutable(const LinkOptions& options) {
             appendEntry(args, flavor, options.entrySymbol);
             if (options.freestanding || options.target.isEfi || options.target.isInstantOS) {
                 args.push_back("/nodefaultlib");
+            }
+            if (!options.target.isEfi && !options.target.isInstantOS) {
+                args.push_back("kernel32.lib");
             }
         }
     }

@@ -1,0 +1,87 @@
+module main
+
+// `.insize`: the internal byte size of a type, as a compile-time constant.
+// Replaces the removed `sizeof`.
+//
+// The point of this fixture is not just that the numbers are some fixed set, but
+// that they agree with the layout the backend actually emits: each size is
+// checked against a *measured* offset (field spacing, array stride) taken from
+// real addresses. That is the property `.insize` must never lose -- a size that
+// disagrees with the emitted bytes is exactly how the generic-instantiation bug
+// corrupted memory.
+
+struct Pt { i64 x, i64 y }
+struct [packed(on)] Packed { u8 a, i64 b }
+struct Small { i16 a, i16 b }
+enum Col : i32 { R, G }
+enum Sum { N(i64), P(text, i64), Nil }
+
+fun elemSize<T>(T[] xs) -> u64 {
+    return T.insize
+}
+
+fun main() -> i32 {
+    i32 errors = 0
+
+    // --- primitives -----------------------------------------------------------
+    if i8.insize != 1 { errors = errors + 1 }
+    if i16.insize != 2 { errors = errors + 1 }
+    if i32.insize != 4 { errors = errors + 1 }
+    if i64.insize != 8 { errors = errors + 1 }
+    if u8.insize != 1 { errors = errors + 1 }
+    if i128.insize != 16 { errors = errors + 1 }
+    if bool.insize != 1 { errors = errors + 1 }
+    if text.insize != 8 { errors = errors + 1 }
+
+    // --- aggregates -----------------------------------------------------------
+    if Pt.insize != 16 { errors = errors + 1 }
+    if Packed.insize != 9 { errors = errors + 1 }      // no inter-field padding
+    if Small.insize != 4 { errors = errors + 1 }       // integers pack tightly
+    if Sum.insize != 24 { errors = errors + 1 }        // tag + two-field payload
+
+    // --- value form: the value's own type ------------------------------------
+    Pt p
+    p.x = 1
+    p.y = 2
+    if p.insize != Pt.insize { errors = errors + 1 }
+    i64 n = 7
+    if n.insize != 8 { errors = errors + 1 }
+
+    // A slice is a fat pointer; a fixed array is stride * count.
+    i64[3] arr
+    i64[] s = arr
+    if s.insize != 16 { errors = errors + 1 }
+    if arr.insize != 24 { errors = errors + 1 }
+
+    // --- agreement with the emitted layout -----------------------------------
+    // Field spacing inside a struct must match the field type's own .insize.
+    unsafe {
+        i64 spacing = cast<i64>(&p.y) - cast<i64>(&p.x)
+        if spacing != cast<i64>(i64.insize) { errors = errors + 1 }
+
+        Small sm
+        i64 smallSpacing = cast<i64>(&sm.b) - cast<i64>(&sm.a)
+        if smallSpacing != cast<i64>(i16.insize) { errors = errors + 1 }
+
+        // Array stride must equal the element type's .insize.
+        Pt[3] pts
+        i64 stride = cast<i64>(&pts[1]) - cast<i64>(&pts[0])
+        if stride != cast<i64>(Pt.insize) { errors = errors + 1 }
+    }
+
+    // --- generics: one per instantiation, not one shared value ----------------
+    i64[] wide = arr
+    Pt[2] pairs
+    Pt[] pairSlice = pairs
+    if elemSize<i64>(wide) != 8 { errors = errors + 1 }
+    if elemSize<Pt>(pairSlice) != 16 { errors = errors + 1 }
+
+    // A C-style enum is laid out as its declared underlying type.
+    // (Floats are sized by precision too; see float_layout.ins.)
+    if Col.insize != 4 { errors = errors + 1 }
+
+    if errors != 0 {
+        return 1
+    }
+    return 88
+}

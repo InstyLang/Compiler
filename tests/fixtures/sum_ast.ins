@@ -1,0 +1,73 @@
+module main
+
+// Tagged-union enums modeling a small expression AST, built on the heap and
+// evaluated with `match` (recursion via `Expr*`). Also exercises a by-value
+// sum type with a unit variant and a `_` default. Returns 42.
+
+enum Expr {
+    Lit(i64),
+    Add(Expr*, Expr*),
+    Mul(Expr*, Expr*),
+    Neg(Expr*)
+}
+
+fun lit(i64 v) -> Expr* {
+    Expr* e = new Expr
+    unsafe { ~e = Expr.Lit(v) }
+    return e
+}
+fun bin_add(Expr* l, Expr* r) -> Expr* {
+    Expr* e = new Expr
+    unsafe { ~e = Expr.Add(l, r) }
+    return e
+}
+fun bin_mul(Expr* l, Expr* r) -> Expr* {
+    Expr* e = new Expr
+    unsafe { ~e = Expr.Mul(l, r) }
+    return e
+}
+fun negate(Expr* x) -> Expr* {
+    Expr* e = new Expr
+    unsafe { ~e = Expr.Neg(x) }
+    return e
+}
+
+fun eval(Expr* e) -> i64 {
+    Expr node
+    unsafe { node = ~e }
+    match node {
+        Lit(v) => return v
+        Add(l, r) => return eval(l) + eval(r)
+        Mul(l, r) => return eval(l) * eval(r)
+        Neg(x) => return 0 - eval(x)
+    }
+    return 0
+}
+
+// A by-value sum type with a unit variant and a `_` arm.
+enum Shape {
+    Circle(i64),
+    Square(i64),
+    Point
+}
+
+fun area(Shape s) -> i64 {
+    match s {
+        Circle(r) => return 3 * r * r
+        Square(side) => return side * side
+        _ => return 0
+    }
+    return 0
+}
+
+fun main() -> i32 {
+    // (2 + 3) * -(4) + 30 = 5*-4 + 30 = -20 + 30 = 10
+    Expr* tree = bin_add(bin_mul(bin_add(lit(2), lit(3)), negate(lit(4))), lit(30))
+    i64 e = eval(tree)                    // 10
+
+    i64 a = area(Shape.Square(4))         // 16
+    i64 b = area(Shape.Circle(2))         // 12
+    i64 c = area(Shape.Point)             // 0
+
+    return cast<i32>(e + a + b + c + 4)   // 10 + 16 + 12 + 0 + 4 = 42
+}

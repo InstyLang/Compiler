@@ -86,6 +86,82 @@ std::vector<Token> Lexer::tokenize(const std::string& source) {
     std::vector<Token> out;
 
     while (!atEnd()) {
+        // The '(' that opens an `asm( ... )` body: everything up to the matching
+        // ')' is assembly, not Insty, so it is taken verbatim instead of being
+        // tokenized. Doing this in the lexer (rather than recovering the text in
+        // the parser) is what lets a block comment contain an apostrophe or a
+        // quote without the file failing to lex.
+        if (pos_ == asmBodyParen_) {
+            asmBodyParen_ = static_cast<size_t>(-1);
+
+            const int parenOffset = static_cast<int>(pos_);
+            const int parenLine = line_;
+            const int parenColumn = column_;
+            advance();
+            out.push_back(makeToken(TokenType::LParen, "(", parenOffset, parenLine,
+                                    parenColumn));
+
+            const int bodyOffset = static_cast<int>(pos_);
+            const int bodyLine = line_;
+            const int bodyColumn = column_;
+            std::string body;
+            int depth = 1;
+            while (!atEnd()) {
+                const char ch = peek();
+                if (ch == ';') {
+                    // A comment runs to end of line; parens and quotes inside it
+                    // are just text.
+                    while (!atEnd() && peek() != '\n') body.push_back(advance());
+                    continue;
+                }
+                if (ch == '"' || ch == '\'') {
+                    // A quoted run is opaque, so a ')' inside it does not close
+                    // the block.
+                    const char quote = ch;
+                    body.push_back(advance());
+                    while (!atEnd() && peek() != quote) {
+                        if (peek() == '\\') {
+                            body.push_back(advance());
+                            if (!atEnd()) body.push_back(advance());
+                            continue;
+                        }
+                        const bool wasNewline = peek() == '\n';
+                        body.push_back(advance());
+                        if (wasNewline) newline();
+                    }
+                    if (!atEnd()) body.push_back(advance());
+                    continue;
+                }
+                if (ch == '(') {
+                    ++depth;
+                    body.push_back(advance());
+                    continue;
+                }
+                if (ch == ')') {
+                    if (--depth == 0) break;
+                    body.push_back(advance());
+                    continue;
+                }
+                if (ch == '\n') {
+                    body.push_back(advance());
+                    newline();
+                    continue;
+                }
+                body.push_back(advance());
+            }
+            out.push_back(makeToken(TokenType::AsmBody, body, bodyOffset, bodyLine,
+                                    bodyColumn));
+            if (!atEnd()) {
+                const int closeOffset = static_cast<int>(pos_);
+                const int closeLine = line_;
+                const int closeColumn = column_;
+                advance();
+                out.push_back(makeToken(TokenType::RParen, ")", closeOffset,
+                                        closeLine, closeColumn));
+            }
+            continue;
+        }
+
         char c = peek();
 
         if (c == ' ' || c == '\t' || c == '\r') {
@@ -163,7 +239,48 @@ void Lexer::lexIdentifierOrKeyword(std::vector<Token>& out) {
     }
 
     TokenType type = keywordTokenType(text);
+    const bool isAsm = (type == TokenType::Identifier && text == "asm");
     out.push_back(makeToken(type, std::move(text), startOffset, startLine, startColumn));
+
+    if (!isAsm) return;
+
+    // Decide here whether this `asm` introduces a raw block, and if so record the
+    // offset of the '(' that opens the body. It has to be decided now, before the
+    // body is reached, and it cannot simply be "the next '('" because a
+    // `[keep(rax)]` directive list contains parens of its own -- those are ordinary
+    // Insty tokens and are lexed normally.
+    const std::string& s = *src_;
+    size_t p = pos_;
+    const auto skipBlanks = [&]() {
+        while (p < s.size() && (s[p] == ' ' || s[p] == '\t' || s[p] == '\r')) ++p;
+    };
+    skipBlanks();
+    if (p < s.size() && s[p] == '[') {
+        int brackets = 0;
+        while (p < s.size()) {
+            if (s[p] == '[') ++brackets;
+            else if (s[p] == ']') {
+                if (--brackets == 0) { ++p; break; }
+            } else if (s[p] == '\n') {
+                return;  // a directive list does not span lines; not a block
+            }
+            ++p;
+        }
+        if (brackets > 0) return;  // unterminated: let the parser report it
+        skipBlanks();
+        if (p >= s.size() || s[p] != '(') return;
+        asmBodyParen_ = p;
+        return;
+    }
+    if (p >= s.size() || s[p] != '(') {
+        return;  // `asm<T>(...)`, or something else entirely
+    }
+    // A bare `asm(`: a block unless the parenthesis opens the legacy form, which
+    // is recognized by a string literal (the template) or by being empty.
+    size_t q = p + 1;
+    while (q < s.size() && (s[q] == ' ' || s[q] == '\t' || s[q] == '\r' || s[q] == '\n')) ++q;
+    if (q < s.size() && (s[q] == '"' || s[q] == ')')) return;
+    asmBodyParen_ = p;
 }
 
 void Lexer::lexNumber(std::vector<Token>& out) {
@@ -344,6 +461,7 @@ void Lexer::lexOperator(std::vector<Token>& out) {
     TokenType twoType = TokenType::Invalid;
     bool two = true;
     if (c == '-' && n == '>') twoType = TokenType::Arrow;
+    else if (c == '=' && n == '>') twoType = TokenType::FatArrow;
     else if (c == '=' && n == '=') twoType = TokenType::EqEq;
     else if (c == '!' && n == '=') twoType = TokenType::NotEq;
     else if (c == '<' && n == '=') twoType = TokenType::Le;
@@ -353,6 +471,7 @@ void Lexer::lexOperator(std::vector<Token>& out) {
     else if (c == '<' && n == '<') twoType = TokenType::Shl;
     else if (c == '>' && n == '>') twoType = TokenType::Shr;
     else if (c == ':' && n == ':') twoType = TokenType::ColonColon;
+    else if (c == '.' && n == '.') twoType = TokenType::DotDot;
     else two = false;
 
     if (two) {

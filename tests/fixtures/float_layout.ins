@@ -1,0 +1,109 @@
+module main
+
+// Float layout and float-aggregate ABI.
+//
+// A float occupies its precision, not a register: f16 2, f32 4, f64 8, f128 16.
+// Sizes alone are not enough to trust, so every size here is cross-checked
+// against a measured field spacing / array stride, and -- the part that actually
+// breaks if the sizes are wrong -- float aggregates are passed and returned *by
+// value* and their contents verified.
+//
+// The interesting ABI case is System V eightbyte classification. `V2` is two f32s
+// in eight bytes: one pure-SSE eightbyte carrying *both* floats in a single XMM
+// register. `Mix` puts an i32 and an f32 in the same eightbyte, which makes it
+// INTEGER (a GP register) instead. Both must round-trip exactly.
+//
+// Comparisons are f32-against-f32 throughout: mixing an f32 with an f64 literal
+// is a separate, unrelated defect and would mask what this fixture is testing.
+
+struct V2 { f32 x, f32 y }                 // 8  : one SSE eightbyte, two packed f32
+struct V3 { f32 x, f32 y, f32 z }          // 12 : SSE + SSE
+struct V4 { f32 a, f32 b, f32 c, f32 d }   // 16 : two SSE eightbytes
+struct D2 { f64 a, f64 b }                 // 16 : two SSE eightbytes
+struct Mix { i32 i, f32 f }                // 8  : INTEGER (int and float share eb0)
+struct H2 { f16 a, f16 b }                 // 4
+struct Q  { f128 a }                       // 16
+
+fun sum2(V2 v) -> f32 { return v.x + v.y }
+fun make2(f32 a, f32 b) -> V2 {
+    V2 r
+    r.x = a
+    r.y = b
+    return r
+}
+fun sum3(V3 v) -> f32 { return v.x + v.y + v.z }
+fun sum4(V4 v) -> f32 { return v.a + v.b + v.c + v.d }
+fun sumD(D2 v) -> f64 { return v.a + v.b }
+fun sumMix(Mix m) -> f32 { return cast<f32>(m.i) + m.f }
+
+fun main() -> i32 {
+    i32 e = 0
+
+    // --- sizes ---------------------------------------------------------------
+    if f16.insize != 2 { e = e + 1 }
+    if f32.insize != 4 { e = e + 1 }
+    if f64.insize != 8 { e = e + 1 }
+    if f128.insize != 16 { e = e + 1 }
+    if V2.insize != 8 { e = e + 1 }
+    if V3.insize != 12 { e = e + 1 }
+    if V4.insize != 16 { e = e + 1 }
+    if D2.insize != 16 { e = e + 1 }
+    if Mix.insize != 8 { e = e + 1 }
+    if H2.insize != 4 { e = e + 1 }
+    if Q.insize != 16 { e = e + 1 }
+
+    // --- sizes agree with the emitted layout ---------------------------------
+    V2 v
+    v.x = cast<f32>(1.5)
+    v.y = cast<f32>(2.25)
+    f32[4] arr
+    D2 dd
+    dd.a = 1.5
+    dd.b = 2.5
+    unsafe {
+        if cast<i64>(&v.y) - cast<i64>(&v.x) != 4 { e = e + 1 }
+        if cast<i64>(&arr[1]) - cast<i64>(&arr[0]) != 4 { e = e + 1 }
+        if cast<i64>(&dd.b) - cast<i64>(&dd.a) != 8 { e = e + 1 }
+    }
+
+    // --- by value in ---------------------------------------------------------
+    if sum2(v) != cast<f32>(3.75) { e = e + 1 }
+
+    V3 t
+    t.x = cast<f32>(1.0)
+    t.y = cast<f32>(2.0)
+    t.z = cast<f32>(4.0)
+    if sum3(t) != cast<f32>(7.0) { e = e + 1 }
+
+    V4 q
+    q.a = cast<f32>(1.0)
+    q.b = cast<f32>(2.0)
+    q.c = cast<f32>(4.0)
+    q.d = cast<f32>(8.0)
+    if sum4(q) != cast<f32>(15.0) { e = e + 1 }
+
+    if sumD(dd) != 4.0 { e = e + 1 }
+
+    Mix m
+    m.i = 3
+    m.f = cast<f32>(0.5)
+    if sumMix(m) != cast<f32>(3.5) { e = e + 1 }
+
+    // --- by value out --------------------------------------------------------
+    V2 r = make2(cast<f32>(4.5), cast<f32>(0.25))
+    if r.x != cast<f32>(4.5) { e = e + 1 }
+    if r.y != cast<f32>(0.25) { e = e + 1 }
+
+    // --- f32 array round-trip at a 4-byte stride ----------------------------
+    arr[0] = cast<f32>(1.25)
+    arr[1] = cast<f32>(2.5)
+    arr[2] = cast<f32>(3.75)
+    arr[3] = cast<f32>(4.0)
+    f32 acc = arr[0] + arr[1] + arr[2] + arr[3]
+    if acc != cast<f32>(11.5) { e = e + 1 }
+
+    if e != 0 {
+        return 1
+    }
+    return 55
+}

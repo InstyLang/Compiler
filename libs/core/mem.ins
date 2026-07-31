@@ -1,0 +1,139 @@
+// Insty standard library: mem
+//
+// Raw memory operations on byte pointers. All functions are simple byte
+// loops; they make no alignment or overlap assumptions except where noted.
+
+module mem
+
+// Copy n bytes from src to dst. Regions must not overlap.
+export fun copy(u8* dst, u8* src, u64 n) -> void {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            dst[i] = src[i]
+            i = i + 1
+        }
+    }
+}
+
+// Copy n bytes from src to dst. Regions may overlap.
+export fun move(u8* dst, u8* src, u64 n) -> void {
+    unsafe {
+        if cast<u64>(dst) == cast<u64>(src) {
+            return
+        }
+        if cast<u64>(dst) < cast<u64>(src) {
+            copy(dst, src, n)
+            return
+        }
+        u64 i = n
+        while i > 0 {
+            i = i - 1
+            dst[i] = src[i]
+        }
+    }
+}
+
+// Fill n bytes at p with the given value.
+export fun set(u8* p, u8 value, u64 n) -> void {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            p[i] = value
+            i = i + 1
+        }
+    }
+}
+
+// Zero n bytes at p.
+export fun zero(u8* p, u64 n) -> void {
+    set(p, 0, n)
+}
+
+// Swap n bytes between a and b.
+export fun swap(u8* a, u8* b, u64 n) -> void {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            u8 t = a[i]
+            a[i] = b[i]
+            b[i] = t
+            i = i + 1
+        }
+    }
+}
+
+// Compare n bytes; returns true when the regions are identical.
+export fun eq(u8* a, u8* b, u64 n) -> bool {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            if a[i] != b[i] {
+                return false
+            }
+            i = i + 1
+        }
+    }
+    return true
+}
+
+// Lexicographic byte comparison: -1 when a < b, 1 when a > b, else 0.
+export fun cmp(u8* a, u8* b, u64 n) -> i64 {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            if a[i] < b[i] {
+                return 0 - 1
+            }
+            if a[i] > b[i] {
+                return 1
+            }
+            i = i + 1
+        }
+    }
+    return 0
+}
+
+// Index of the first occurrence of value in p[0..n), or -1.
+export fun find(u8* p, u8 value, u64 n) -> i64 {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            if p[i] == value {
+                return cast<i64>(i)
+            }
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
+// Index one past the first byte that is not value. Returns n if all bytes match.
+export fun skip_value(u8* p, u8 value, u64 n) -> u64 {
+    unsafe {
+        u64 i = 0
+        while i < n {
+            if p[i] != value {
+                return i
+            }
+            i = i + 1
+        }
+    }
+    return n
+}
+
+// Count bytes equal to value in p[0..n).
+export fun count(u8* p, u8 value, u64 n) -> u64 {
+    unsafe {
+        u64 i = 0
+        u64 c = 0
+        while i < n {
+            if p[i] == value {
+                c = c + 1
+            }
+            i = i + 1
+        }
+        return c
+    }
+    return 0
+}

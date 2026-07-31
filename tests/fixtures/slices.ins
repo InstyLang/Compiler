@@ -1,0 +1,27 @@
+module main
+
+// Slices (`T[]`) are 16-byte { ptr, len } values. This fixture exercises the
+// forms that need no allocator: a slice bound from a fixed array, a slice from
+// an array literal, `.len`, indexing, passing slices by value, and copying a
+// slice into another slice. Returns 42.
+
+fun sum(i32[] xs) -> i32 {
+    i32 total = 0
+    i64 i = 0
+    while i < xs.len {
+        total = total + xs[i]
+        i = i + 1
+    }
+    return total
+}
+
+fun main() -> i32 {
+    i32[3] a
+    a[0] = 10
+    a[1] = 20
+    a[2] = 9
+    i32[] s = a            // slice over a fixed array (len 3), sum 39
+    i32[] t = s            // slice copy shares ptr/len
+    i32[] lit = [1, 2]     // array-literal slice (len 2), sum 3
+    return sum(t) + sum(lit)
+}

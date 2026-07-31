@@ -1,0 +1,21 @@
+module main
+
+fun main() -> i32 {
+    unsafe {
+        u8* p = @malloc(32, 16)
+        if cast<u64>(p) == 0 {
+            return 4
+        }
+        p[0] = 9
+        p[7] = 33
+        p[31] = 99
+
+        u8* q = @realloc(p, 32, 8, 16)
+        if cast<u64>(q) == 0 {
+            return 5
+        }
+        i32 total = cast<i32>(q[0]) + cast<i32>(q[7])
+        @free(q, 8, 16)
+        return total
+    }
+}

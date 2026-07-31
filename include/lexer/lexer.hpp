@@ -33,6 +33,7 @@ enum class TokenType {
     KwLoop,
     KwWhen,
     KwSwitch,
+    KwMatch,
     KwReturn,
     KwBreak,
     KwSkip,
@@ -54,10 +55,12 @@ enum class TokenType {
     RBracket,
     Comma,
     Dot,
+    DotDot,
     Colon,
     ColonColon,
     Semicolon,
     Arrow,
+    FatArrow,
     Assign,
     Plus,
     Minus,
@@ -82,6 +85,10 @@ enum class TokenType {
     At,
     Hash,
     Dollar,
+    // The verbatim body of an sm( ... ) block. Produced by the lexer so the
+    // assembly inside is never interpreted as Insty source: quotes, apostrophes
+    // and stray punctuation in a comment cannot break lexing.
+    AsmBody,
 
     Newline,
     EndOfFile,
@@ -112,6 +119,11 @@ private:
     int line_ = 1;
     int column_ = 1;
 
+    // Offset of the '(' that opens a raw sm( ... ) body, or npos. Set when the
+    // sm identifier is lexed, so the opening paren can be recognized even when
+    // a [keep(...)] directive list with its own parens comes first.
+    size_t asmBodyParen_ = static_cast<size_t>(-1);
+
     bool atEnd() const;
     char peek(size_t ahead = 0) const;
     char advance();
@@ -128,3 +140,4 @@ private:
 
 TokenType keywordTokenType(const std::string& word);
 bool isPrimitiveTypeName(const std::string& word);
+

@@ -1,0 +1,107 @@
+module main
+
+// Call coverage for the WebAssembly backend.
+//
+// wasm passes arguments on the operand stack, but the selector has already
+// distributed them into ABI argument registers before the call. The emitter
+// replays that assignment to read each argument back out of the local standing
+// in for its register. These functions exercise the shapes that depends on:
+// arity, recursion, mutual recursion, monomorphized generics, class methods, and
+// results that are used or discarded.
+
+fun addup(i32 a, i32 b) -> i32 {
+    return a + b
+}
+
+// Six integer parameters fills the System V argument-register file exactly; a
+// seventh would have to go on the stack, which is not supported yet.
+fun six(i32 a, i32 b, i32 c, i32 d, i32 e, i32 f) -> i32 {
+    return a + b + c + d + e + f
+}
+
+// Self-recursion.
+fun fact(i32 n) -> i32 {
+    if n <= 1 {
+        return 1
+    }
+    return n * fact(n - 1)
+}
+
+// Mutual recursion: each call target must resolve to an index assigned before
+// either body is translated.
+fun isodd(i32 n) -> bool {
+    if n == 0 {
+        return false
+    }
+    return iseven(n - 1)
+}
+
+fun iseven(i32 n) -> bool {
+    if n == 0 {
+        return true
+    }
+    return isodd(n - 1)
+}
+
+fun parity(i32 n) -> i32 {
+    if isodd(n) {
+        return 1
+    }
+    return 0
+}
+
+// A monomorphized generic: instantiated per type argument under its own symbol.
+fun twice<T>(T v) -> T {
+    return v + v
+}
+
+fun generics(i32 a, i64 b) -> i64 {
+    i32 x = twice<i32>(a)
+    i64 y = twice<i64>(b)
+    return cast<i64>(x) + y
+}
+
+// A void call, and a result that is deliberately discarded.
+i32 SINK
+
+fun bump(i32 by) -> void {
+    SINK = SINK + by
+}
+
+fun discard(i32 v) -> i32 {
+    bump(v)
+    addup(v, v)     // result unused: the emitter has to drop it
+    bump(v)
+    return SINK
+}
+
+// Class constructors, methods and operator overloads are all ordinary calls
+// with `this` as an implicit first argument.
+class Counter {
+    i32 value
+    constructor(i32 initial) {
+        this.value = initial
+    }
+    fun inc() -> void {
+        this.value = this.value + 1
+    }
+    // Takes an i32 rather than a Counter: passing an aggregate by value is a
+    // separate piece of ABI work and is not supported yet.
+    operator +(i32 rhs) -> i32 {
+        return this.value + rhs
+    }
+    fun get() -> i32 {
+        return this.value
+    }
+}
+
+fun counters() -> i32 {
+    Counter a = Counter(5)
+    a.inc()
+    a.inc()
+    return a + 26
+}
+
+fun main() -> i32 {
+    return addup(20, 22)
+}

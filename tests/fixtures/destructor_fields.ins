@@ -1,0 +1,35 @@
+module main
+
+i32 destroyed = 0
+
+class Inner {
+    i32 value
+
+    constructor(i32 v) {
+        this.value = v
+    }
+
+    destructor() -> void {
+        destroyed = destroyed + this.value
+    }
+}
+
+class Outer {
+    Inner inner
+    i32 tag
+
+    constructor(i32 v) {
+        this.inner = Inner(v)
+        this.tag = 100
+    }
+
+    destructor() -> void {
+        destroyed = destroyed + this.tag
+    }
+}
+
+fun main() -> i32 {
+    Outer* p = new Outer(7)
+    delete p
+    return destroyed
+}

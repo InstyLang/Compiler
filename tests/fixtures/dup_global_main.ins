@@ -1,0 +1,9 @@
+module main
+
+import dup_global_dep
+
+i32 shared = 2
+
+fun main() -> i32 {
+    return dep() + shared
+}

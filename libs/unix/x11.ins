@@ -1,0 +1,307 @@
+// Insty standard library: unix::x11
+//
+// Bindings to Xlib (libX11) for windowing on Linux / X11. Functions are
+// imported straight from the system shared library via `extern fun`, and each
+// extern carries the `[lib("X11")]` directive: whenever one is referenced the
+// compiler records "X11" as a required library and links the program as a
+// hosted, dynamically-linked ELF against `libX11.so` (and libc). No manual
+// linker flags are needed.
+//
+//   import unix::x11
+//
+//   fun main() -> i32 {
+//       u64 dpy = x11.open_display("")
+//       if dpy == 0 { return 1 }
+//       i32 screen = x11.default_screen(dpy)
+//       u64 root   = x11.root_window(dpy, screen)
+//       u64 win = x11.create_simple_window(
+//           dpy, root, 0, 0, 640, 480, 1,
+//           x11.black_pixel(dpy, screen), x11.white_pixel(dpy, screen))
+//       x11.store_name(dpy, win, "Hello, Insty")
+//       x11.select_input(dpy, win, x11.exposure_mask() | x11.key_press_mask())
+//       x11.map_window(dpy, win)
+//       // ... event loop with x11.next_event(dpy, ...) ...
+//       x11.close_display(dpy)
+//       return 0
+//   }
+//
+// Conventions (mirroring the windows::* bindings):
+//   - Opaque handles (Display*, Window/XID, GC, Drawable) are modelled as u64.
+//   - Pixel values and XIDs are u64; screen numbers and Status/int returns i32.
+//   - The `long` event mask is passed as i64.
+//   - `text` arguments are NUL-terminated C strings (an empty "" selects the
+//     $DISPLAY default for open_display).
+//   - An XEvent is an opaque, fixed-size buffer: allocate `u8[x11.event_size()]`
+//     (192 bytes on x86-64) and read its kind with event_type(&buf).
+//   - The `[lib("X11")]` directive is repeatable, e.g.
+//     `extern fun [lib("X11"), lib("Xext")] ...`, if a function needs several.
+
+module x11
+
+// =========================================================================
+// libX11: display / screen / root window
+// =========================================================================
+
+extern fun [lib("X11")] XOpenDisplay(text name) -> u64
+extern fun [lib("X11")] XCloseDisplay(u64 display) -> i32
+extern fun [lib("X11")] XDefaultScreen(u64 display) -> i32
+extern fun [lib("X11")] XDefaultRootWindow(u64 display) -> u64
+extern fun [lib("X11")] XRootWindow(u64 display, i32 screen) -> u64
+extern fun [lib("X11")] XBlackPixel(u64 display, i32 screen) -> u64
+extern fun [lib("X11")] XWhitePixel(u64 display, i32 screen) -> u64
+
+// =========================================================================
+// libX11: window lifecycle
+// =========================================================================
+
+extern fun [lib("X11")] XCreateSimpleWindow(u64 display, u64 parent, i32 x, i32 y,
+                                            u32 width, u32 height, u32 border_width,
+                                            u64 border, u64 background) -> u64
+extern fun [lib("X11")] XDestroyWindow(u64 display, u64 window) -> i32
+extern fun [lib("X11")] XMapWindow(u64 display, u64 window) -> i32
+extern fun [lib("X11")] XUnmapWindow(u64 display, u64 window) -> i32
+extern fun [lib("X11")] XStoreName(u64 display, u64 window, text name) -> i32
+extern fun [lib("X11")] XSelectInput(u64 display, u64 window, i64 event_mask) -> i32
+
+// =========================================================================
+// libX11: output / flushing
+// =========================================================================
+
+extern fun [lib("X11")] XFlush(u64 display) -> i32
+extern fun [lib("X11")] XSync(u64 display, i32 discard) -> i32
+
+// =========================================================================
+// libX11: event queue
+// =========================================================================
+
+extern fun [lib("X11")] XPending(u64 display) -> i32
+extern fun [lib("X11")] XNextEvent(u64 display, u8* event_out) -> i32
+
+// =========================================================================
+// libX11: minimal drawing (graphics context + primitives)
+// =========================================================================
+
+extern fun [lib("X11")] XCreateGC(u64 display, u64 drawable, u64 valuemask, u64 values) -> u64
+extern fun [lib("X11")] XFreeGC(u64 display, u64 gc) -> i32
+extern fun [lib("X11")] XSetForeground(u64 display, u64 gc, u64 foreground) -> i32
+extern fun [lib("X11")] XFillRectangle(u64 display, u64 drawable, u64 gc,
+                                       i32 x, i32 y, u32 width, u32 height) -> i32
+
+// =========================================================================
+// Wrappers: display / screen
+// =========================================================================
+
+// Open a connection to the X server. Pass "" to use the $DISPLAY default.
+// Returns a Display* handle (as u64), or 0 on failure.
+export fun open_display(text name) -> u64 {
+    unsafe {
+        return XOpenDisplay(name)
+    }
+    return 0
+}
+
+// Close a display connection (destroys all its windows/resources).
+export fun close_display(u64 display) -> void {
+    unsafe {
+        XCloseDisplay(display)
+    }
+}
+
+// Default screen number for this display.
+export fun default_screen(u64 display) -> i32 {
+    unsafe {
+        return XDefaultScreen(display)
+    }
+    return 0
+}
+
+// Root window of the given screen.
+export fun root_window(u64 display, i32 screen) -> u64 {
+    unsafe {
+        return XRootWindow(display, screen)
+    }
+    return 0
+}
+
+// Root window of the display's default screen.
+export fun default_root_window(u64 display) -> u64 {
+    unsafe {
+        return XDefaultRootWindow(display)
+    }
+    return 0
+}
+
+// Pixel value for black / white on the given screen (handy default colors).
+export fun black_pixel(u64 display, i32 screen) -> u64 {
+    unsafe {
+        return XBlackPixel(display, screen)
+    }
+    return 0
+}
+
+export fun white_pixel(u64 display, i32 screen) -> u64 {
+    unsafe {
+        return XWhitePixel(display, screen)
+    }
+    return 0
+}
+
+// =========================================================================
+// Wrappers: window lifecycle
+// =========================================================================
+
+// Create a top-level (or child) window. Returns the new Window id.
+export fun create_simple_window(u64 display, u64 parent, i32 x, i32 y,
+                                u32 width, u32 height, u32 border_width,
+                                u64 border, u64 background) -> u64 {
+    unsafe {
+        return XCreateSimpleWindow(display, parent, x, y, width, height,
+                                   border_width, border, background)
+    }
+    return 0
+}
+
+export fun destroy_window(u64 display, u64 window) -> void {
+    unsafe {
+        XDestroyWindow(display, window)
+    }
+}
+
+// Make a window visible (map it onto the screen).
+export fun map_window(u64 display, u64 window) -> void {
+    unsafe {
+        XMapWindow(display, window)
+    }
+}
+
+export fun unmap_window(u64 display, u64 window) -> void {
+    unsafe {
+        XUnmapWindow(display, window)
+    }
+}
+
+// Set the window title (WM_NAME).
+export fun store_name(u64 display, u64 window, text name) -> void {
+    unsafe {
+        XStoreName(display, window, name)
+    }
+}
+
+// Choose which events the window will receive (OR the *_mask() accessors).
+export fun select_input(u64 display, u64 window, i64 event_mask) -> void {
+    unsafe {
+        XSelectInput(display, window, event_mask)
+    }
+}
+
+// =========================================================================
+// Wrappers: flushing / sync
+// =========================================================================
+
+// Flush the output buffer (send queued requests to the server).
+export fun flush(u64 display) -> void {
+    unsafe {
+        XFlush(display)
+    }
+}
+
+// Flush and wait for the server to process all requests. When `discard` is
+// true, pending events are thrown away.
+export fun sync(u64 display, bool discard) -> void {
+    unsafe {
+        XSync(display, cast<i32>(discard))
+    }
+}
+
+// =========================================================================
+// Wrappers: events
+// =========================================================================
+
+// Byte size of an XEvent; allocate `u8[x11.event_size()]` for next_event.
+export fun event_size() -> u64 {
+    return 192
+}
+
+// Number of events already queued (does not block / read the socket).
+export fun pending(u64 display) -> i32 {
+    unsafe {
+        return XPending(display)
+    }
+    return 0
+}
+
+// Block until the next event and copy it into `event_out`
+// (a buffer of at least event_size() bytes).
+export fun next_event(u64 display, u8* event_out) -> void {
+    unsafe {
+        XNextEvent(display, event_out)
+    }
+}
+
+// Read the event kind (its leading `int type`) out of an XEvent buffer.
+// Compare against the *_press()/expose()/... accessors below.
+export fun event_type(u8* event) -> i32 {
+    unsafe {
+        i32* as_int = cast<i32*>(event)
+        return ~as_int
+    }
+    return 0
+}
+
+// =========================================================================
+// Wrappers: minimal drawing
+// =========================================================================
+
+// Create a graphics context for a drawable with default values.
+export fun create_gc(u64 display, u64 drawable) -> u64 {
+    unsafe {
+        return XCreateGC(display, drawable, 0, 0)
+    }
+    return 0
+}
+
+export fun free_gc(u64 display, u64 gc) -> void {
+    unsafe {
+        XFreeGC(display, gc)
+    }
+}
+
+export fun set_foreground(u64 display, u64 gc, u64 color) -> void {
+    unsafe {
+        XSetForeground(display, gc, color)
+    }
+}
+
+export fun fill_rectangle(u64 display, u64 drawable, u64 gc,
+                          i32 x, i32 y, u32 width, u32 height) -> void {
+    unsafe {
+        XFillRectangle(display, drawable, gc, x, y, width, height)
+    }
+}
+
+// =========================================================================
+// Event-mask accessors (OR these for select_input). Insty module-level
+// globals are not visible across `import`, so constants are zero-argument
+// accessor functions, as in the windows::* modules.
+// =========================================================================
+
+export fun no_event_mask() -> i64 { return 0 }
+export fun key_press_mask() -> i64 { return 0x1 }
+export fun key_release_mask() -> i64 { return 0x2 }
+export fun button_press_mask() -> i64 { return 0x4 }
+export fun button_release_mask() -> i64 { return 0x8 }
+export fun pointer_motion_mask() -> i64 { return 0x40 }
+export fun exposure_mask() -> i64 { return 0x8000 }
+export fun structure_notify_mask() -> i64 { return 0x20000 }
+
+// =========================================================================
+// Event-type accessors (compare against event_type()).
+// =========================================================================
+
+export fun key_press() -> i32 { return 2 }
+export fun key_release() -> i32 { return 3 }
+export fun button_press() -> i32 { return 4 }
+export fun button_release() -> i32 { return 5 }
+export fun motion_notify() -> i32 { return 6 }
+export fun expose() -> i32 { return 12 }
+export fun client_message() -> i32 { return 33 }

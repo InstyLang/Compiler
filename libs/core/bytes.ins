@@ -1,0 +1,162 @@
+// Insty standard library: bytes
+//
+// Length-tagged byte slices. A Bytes value never owns memory; callers provide
+// the backing storage. This module performs no allocation.
+
+module bytes
+
+export struct Bytes {
+    u8* ptr
+    u64 len
+}
+
+export fun make(u8* ptr, u64 len) -> Bytes {
+    Bytes b
+    b.ptr = ptr
+    b.len = len
+    return b
+}
+
+export fun empty() -> Bytes {
+    unsafe {
+        return make(cast<u8*>(0), 0)
+    }
+    Bytes b
+    return b
+}
+
+export fun is_empty(Bytes b) -> bool {
+    return b.len == 0
+}
+
+export fun byte_at(Bytes b, u64 index) -> u8 {
+    unsafe {
+        if index >= b.len {
+            return 0
+        }
+        return b.ptr[index]
+    }
+    return 0
+}
+
+export fun slice(Bytes b, u64 start, u64 count) -> Bytes {
+    if start >= b.len {
+        return empty()
+    }
+    u64 available = b.len - start
+    u64 n = count
+    if n > available {
+        n = available
+    }
+    unsafe {
+        return make(b.ptr + start, n)
+    }
+    return empty()
+}
+
+export fun eq(Bytes a, Bytes b) -> bool {
+    if a.len != b.len {
+        return false
+    }
+    unsafe {
+        u64 i = 0
+        while i < a.len {
+            if a.ptr[i] != b.ptr[i] {
+                return false
+            }
+            i = i + 1
+        }
+    }
+    return true
+}
+
+// Lexicographic comparison: -1 when a < b, 1 when a > b, else 0.
+export fun cmp(Bytes a, Bytes b) -> i64 {
+    unsafe {
+        u64 limit = a.len
+        if b.len < limit {
+            limit = b.len
+        }
+        u64 i = 0
+        while i < limit {
+            if a.ptr[i] < b.ptr[i] {
+                return 0 - 1
+            }
+            if a.ptr[i] > b.ptr[i] {
+                return 1
+            }
+            i = i + 1
+        }
+        if a.len < b.len {
+            return 0 - 1
+        }
+        if a.len > b.len {
+            return 1
+        }
+    }
+    return 0
+}
+
+export fun starts_with(Bytes b, Bytes prefix) -> bool {
+    if prefix.len > b.len {
+        return false
+    }
+    return eq(slice(b, 0, prefix.len), prefix)
+}
+
+export fun ends_with(Bytes b, Bytes suffix) -> bool {
+    if suffix.len > b.len {
+        return false
+    }
+    return eq(slice(b, b.len - suffix.len, suffix.len), suffix)
+}
+
+// Index of the first occurrence of value, or -1.
+export fun find_byte(Bytes b, u8 value) -> i64 {
+    unsafe {
+        u64 i = 0
+        while i < b.len {
+            if b.ptr[i] == value {
+                return cast<i64>(i)
+            }
+            i = i + 1
+        }
+    }
+    return 0 - 1
+}
+
+export fun contains_byte(Bytes b, u8 value) -> bool {
+    return find_byte(b, value) >= 0
+}
+
+export fun count_byte(Bytes b, u8 value) -> u64 {
+    unsafe {
+        u64 count = 0
+        u64 i = 0
+        while i < b.len {
+            if b.ptr[i] == value {
+                count = count + 1
+            }
+            i = i + 1
+        }
+        return count
+    }
+    return 0
+}
+
+// Copy b into dst. Returns the number of bytes copied.
+export fun copy_to(Bytes b, u8* dst, u64 cap) -> u64 {
+    unsafe {
+        u64 n = b.len
+        if n > cap {
+            n = cap
+        }
+        u64 i = 0
+        while i < n {
+            dst[i] = b.ptr[i]
+            i = i + 1
+        }
+        return n
+    }
+    return 0
+}

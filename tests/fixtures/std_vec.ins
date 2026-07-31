@@ -1,0 +1,24 @@
+module main
+
+// Cross-module generic container: std::vec.Vector<T>. Exercises push/grow,
+// get/set, pop, len, and as_slice() iteration. Returns 42.
+
+import std::vec
+
+fun main() -> i32 {
+    Vector<i32> v = Vector<i32>()
+    i64 i = 0
+    while i < 12 {
+        v.push(cast<i32>(i))     // 0..11, forces several grows past cap 4
+        i = i + 1
+    }
+    v.set(0, 100)
+    i32 total = 0
+    for x in v.as_slice() {
+        total = total + x        // 100 + (1+..+11) = 100 + 66 = 166
+    }
+    total = total + cast<i32>(v.len())   // + 12 = 178
+    total = total - v.pop()              // - 11 = 167
+    total = total - v.get(5)             // - 5  = 162
+    return total - 120                   // 42
+}

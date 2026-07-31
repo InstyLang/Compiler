@@ -1,0 +1,75 @@
+module main
+
+// Floating-point coverage for the WebAssembly backend.
+//
+// XMM-class locals hold raw bits, and each instruction reinterprets them
+// according to its own width. That matters for f32: rounding after every single
+// operation is observable, so computing f32 arithmetic in double precision and
+// rounding once at the end would give different answers. `f32accum` below is
+// built to expose exactly that.
+
+fun addd(f64 a, f64 b) -> f64 {
+    return a + b
+}
+
+fun arith64(f64 a, f64 b) -> i32 {
+    f64 s = a + b
+    f64 d = a - b
+    f64 p = a * b
+    f64 q = a / b
+    return cast<i32>(s) + cast<i32>(d) + cast<i32>(p) + cast<i32>(q)
+}
+
+// Every step rounds to f32 precision; the accumulated error is the point.
+fun f32accum(i32 n) -> i32 {
+    f32 s = cast<f32>(0.0)
+    f32 step = cast<f32>(0.1)
+    for i in 0..n {
+        s = s + step
+    }
+    return cast<i32>(s * cast<f32>(1000000.0))
+}
+
+fun arith32(f32 a, f32 b) -> i32 {
+    f32 s = a + b
+    f32 p = a * b
+    f32 q = a / b
+    return cast<i32>(s) + cast<i32>(p) + cast<i32>(q)
+}
+
+// Ordered comparisons drive the flag-consuming branch path.
+fun compare(f64 a, f64 b) -> i32 {
+    i32 r = 0
+    if a < b { r = r + 1 }
+    if a <= b { r = r + 2 }
+    if a > b { r = r + 4 }
+    if a >= b { r = r + 8 }
+    if a == b { r = r + 16 }
+    return r
+}
+
+// Round trips through the integer register file and back.
+fun roundtrip(i32 v) -> i32 {
+    f64 d = cast<f64>(v)
+    f32 f = cast<f32>(d)
+    f64 back = cast<f64>(f)
+    return cast<i32>(back)
+}
+
+// Negation, and the truncation direction for negative values (toward zero).
+fun negtrunc(f64 v) -> i32 {
+    f64 n = -v
+    return cast<i32>(n)
+}
+
+// System V advances the integer and SSE argument-register files independently,
+// so an interleaved signature checks that the emitter tracks both cursors the
+// same way the selector does.
+fun mixed(i32 a, f64 b, i32 c, f64 d, i32 e, f64 f) -> i32 {
+    return a + cast<i32>(b) + c + cast<i32>(d) + e + cast<i32>(f)
+}
+
+fun main() -> i32 {
+    f64 x = addd(20.5, 21.5)
+    return cast<i32>(x)
+}

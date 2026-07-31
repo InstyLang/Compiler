@@ -1,0 +1,16 @@
+module main
+
+// Reaching the kernel is impossible on wasm: a module talks to its host through
+// imports, not through a trap instruction, so an `asm` block carrying a `syscall`
+// has no equivalent. The diagnostic has to say that and point at the portable
+// alternative, not just name an internal opcode.
+
+fun main() -> i32 {
+    unsafe {
+        asm [keep(rax)](
+            mov rax, 39
+            syscall
+        )
+    }
+    return 0
+}

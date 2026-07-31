@@ -13,8 +13,34 @@ void parseMethodTail(Parser& parser, AST::Method& method) {
     if (parser.check(TokenType::Arrow)) {
         parser.advance();
         method.returnType = parser.parseTypeName();
+        method.hasExplicitReturnType = true;
     } else {
         method.returnType = "void";
+        method.hasExplicitReturnType = false;
+    }
+    parser.skipNewlines();
+    if (parser.check(TokenType::LBrace)) {
+        method.body = parser.parseBlock();
+    }
+}
+
+void parseDestructorTail(Parser& parser, AST::Method& method) {
+    // Canonical signature is `destructor() -> void { ... }`. Parse the (required
+    // empty) parameter list and the explicit return type so the declaration
+    // matches what sema enforces (E1501); otherwise the leftover `()` / `-> void`
+    // tokens desync the class-body parser.
+    if (parser.check(TokenType::LParen)) {
+        method.parameters = parser.parseParameterList();
+    } else {
+        method.parameters = {};
+    }
+    if (parser.check(TokenType::Arrow)) {
+        parser.advance();
+        method.returnType = parser.parseTypeName();
+        method.hasExplicitReturnType = true;
+    } else {
+        method.returnType = "void";
+        method.hasExplicitReturnType = false;
     }
     parser.skipNewlines();
     if (parser.check(TokenType::LBrace)) {
@@ -81,7 +107,7 @@ AST::NodePtr Parser::parseClassDeclaration(std::vector<AST::Attribute> attribute
             m.name = "destructor";
             m.isDestructor = true;
             m.attributes = std::move(memberAttrs);
-            parseMethodTail(*this, m);
+            parseDestructorTail(*this, m);
             node->methods.push_back(std::move(m));
         } else if (check(TokenType::KwOperator)) {
             advance();

@@ -1,0 +1,25 @@
+// Compile-time-folded string-literal hashes (@hash("...")) must equal the
+// runtime hash of the same bytes (@hash(var)), across empty / tail-only /
+// exact-word / multi-word lengths. Returns 42 when all cases agree.
+module main
+
+fun main() -> i32 {
+    text a = ""
+    text b = "a"
+    text c = "abcdefgh"          // 8 bytes (tail only)
+    text d = "0123456789abcdef"  // exactly 16 (one full block, empty tail)
+    text e = "0123456789abcdefX" // 17 (one block + 1 tail byte)
+    text f = "the quick brown fox jumps over the lazy dog"  // 43 (two blocks + tail)
+    i64 ok = 0
+    if @hash("") == @hash(a) { ok = ok + 1 }
+    if @hash("a") == @hash(b) { ok = ok + 1 }
+    if @hash("abcdefgh") == @hash(c) { ok = ok + 1 }
+    if @hash("0123456789abcdef") == @hash(d) { ok = ok + 1 }
+    if @hash("0123456789abcdefX") == @hash(e) { ok = ok + 1 }
+    if @hash("the quick brown fox jumps over the lazy dog") == @hash(f) { ok = ok + 1 }
+    if @hash("abc") != @hash("abd") { ok = ok + 1 }   // distinct inputs differ
+    if ok == 7 {
+        return 42
+    }
+    return 0
+}

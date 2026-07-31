@@ -1,0 +1,121 @@
+module main
+
+// Regression test: one generic template instantiated with type arguments of
+// *different sizes*, where the generic code has `T`-typed locals and allocates
+// `new T[n]`.
+//
+// Those constructs get their types from SemaResult::exprTypes, which is keyed by
+// AST node. A generic body used to be shared between instantiations and checked
+// once per instantiation, so each pass overwrote the previous one's entries and
+// the backend emitted every instantiation using the *last* one's types. The
+// element size was then wrong everywhere but in the final instantiation:
+// `new T[n]` under-allocated and the copy loop strided over the wrong width,
+// which silently corrupted data (wasm) or the heap (native).
+//
+// `generic_harden.ins` already instantiates one template twice, but only reads
+// fields -- those resolve through the per-instantiation ClassInfo and stayed
+// correct. The distinguishing ingredients here are the `T` local and `new T[]`.
+
+struct Wide { i64 a, i64 b, i64 c }   // 24 bytes, vs 8 for i64
+
+class Buf<T> {
+    T[] items
+    i64 count
+
+    constructor() {
+        this.items = new T[2]
+        this.count = 0
+    }
+
+    fun push(T v) -> void {
+        if this.count >= this.items.len {
+            // `bigger` is a T-typed local and `new T[...]` a T-sized allocation:
+            // both need this instantiation's own element size for T.
+            T[] bigger = new T[this.items.len * 2]
+            i64 i = 0
+            while i < this.count {
+                bigger[i] = this.items[i]
+                i = i + 1
+            }
+            this.items = bigger
+        }
+        this.items[this.count] = v
+        this.count = this.count + 1
+    }
+
+    fun get(i64 index) -> T {
+        return this.items[index]
+    }
+}
+
+fun repeat<T>(T v, i64 n) -> T[] {
+    T[] out = new T[n]
+    i64 i = 0
+    while i < n {
+        out[i] = v
+        i = i + 1
+    }
+    return out
+}
+
+fun main() -> i32 {
+    i32 errors = 0
+
+    // Generic class, both sizes, crossing the growth path (2 -> 4 -> 8).
+    Buf<i64> small = Buf<i64>()
+    Buf<Wide> big = Buf<Wide>()
+    i64 i = 0
+    while i < 7 {
+        small.push(i * 3)
+        Wide w
+        w.a = i
+        w.b = i * 10
+        w.c = i * 100
+        big.push(w)
+        i = i + 1
+    }
+    i = 0
+    while i < 7 {
+        if small.get(i) != i * 3 {
+            errors = errors + 1
+        }
+        Wide g = big.get(i)
+        if g.a != i || g.b != i * 10 || g.c != i * 100 {
+            errors = errors + 1
+        }
+        i = i + 1
+    }
+
+    // Generic function, both sizes.
+    i64[] r8 = repeat<i64>(42, 6)
+    Wide seed
+    seed.a = 1
+    seed.b = 2
+    seed.c = 3
+    Wide[] r24 = repeat<Wide>(seed, 6)
+    i = 0
+    while i < 6 {
+        if r8[i] != 42 {
+            errors = errors + 1
+        }
+        if r24[i].a != 1 || r24[i].b != 2 || r24[i].c != 3 {
+            errors = errors + 1
+        }
+        i = i + 1
+    }
+
+    // Re-read the first instantiation last: an under-allocated block would have
+    // been overrun by the allocations made since.
+    i = 0
+    while i < 7 {
+        if small.get(i) != i * 3 {
+            errors = errors + 1
+        }
+        i = i + 1
+    }
+
+    if errors != 0 {
+        return 1
+    }
+    return 77
+}

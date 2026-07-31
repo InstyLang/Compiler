@@ -1,0 +1,37 @@
+module main
+
+// Exercises the register-based struct ABI classification in the custom backend.
+//   - Pair (8 bytes): Win64 passes/returns in one GP register; SysV in one
+//     INTEGER eightbyte (RDI / RAX).
+//   - Big (24 bytes): both ABIs fall back to the hidden-pointer (memory) path.
+struct Pair { i32 a  i32 b }
+struct Big  { i64 a  i64 b  i64 c }
+
+fun sum(Pair p) -> i32 { return p.a + p.b }
+
+fun make(i32 x, i32 y) -> Pair {
+    Pair r
+    r.a = x
+    r.b = y
+    return r
+}
+
+fun bigsum(Big v) -> i64 { return v.a + v.b + v.c }
+
+fun mkbig() -> Big {
+    Big r
+    r.a = 1
+    r.b = 2
+    r.c = 3
+    return r
+}
+
+fun main() -> i32 {
+    Pair q = make(10, 20)
+    i32 s = sum(q)            // 30
+
+    Big g = mkbig()
+    i64 b = bigsum(g)         // 6
+
+    return s + cast<i32>(b)   // 36
+}

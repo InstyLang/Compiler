@@ -1,0 +1,74 @@
+module main
+
+// Exercises the custom-backend 128-bit integer support: literal materialization
+// (lo/hi), add/adc, sub/sbb, multiply (cross-term), bitwise, neg/not, shifts,
+// div/mod via the by-pointer runtime helpers, i64<->i128 conversions, and the
+// i128 call-boundary ABI (params/args/return: SysV reg-pair, Win64 by-ref).
+
+// i128 parameters + i128 return across a call boundary.
+fun addsub(u128 a, u128 b) -> u128 {
+    return (a + b) - cast<u128>(1)
+}
+
+// i128 params interleaved with regular int params (exercises arg-register
+// pre-spill ordering).
+fun blend(i32 pre, u128 a, i32 mid, u128 b) -> u128 {
+    return a + b + cast<u128>(pre) + cast<u128>(mid)
+}
+
+fun main() -> i32 {
+    // Build a value larger than 64 bits: 2^64 + 5.
+    u128 big = cast<u128>(1) << 64
+    big = big + cast<u128>(5)
+
+    // Add another 2^64 so the high word becomes 2 and low stays 5.
+    u128 two64 = cast<u128>(1) << 64
+    u128 sum = big + two64            // hi=2, lo=5
+
+    // Subtract back down to hi=1, lo=5.
+    u128 diff = sum - two64           // hi=1, lo=5
+
+    // Multiply: (2^64 + 5) * 3 = 3*2^64 + 15. Low word 15.
+    u128 prod = big * cast<u128>(3)
+    u64 prodLo = cast<u64>(prod)      // 15
+
+    // Division: (2^64 + 5) / 2 == 2^63 + 2 ; mod gives 1.
+    u128 q = big / cast<u128>(2)
+    u128 r = big % cast<u128>(2)      // 1
+    u64 rLo = cast<u64>(r)            // 1
+
+    // Bitwise across both halves.
+    u128 mask = (cast<u128>(1) << 64) | cast<u128>(0xF)
+    u128 anded = sum & mask           // hi: 2&1=0 ... actually 2&1=0, lo:5&0xF=5
+    u64 andLo = cast<u64>(anded)      // 5
+
+    // Right shift by 64 brings the high word down: diff>>64 == 1.
+    u128 shr = diff >> 64
+    u64 shrLo = cast<u64>(shr)        // 1
+
+    // Signed negate then magnitude check.
+    i128 neg = cast<i128>(0) - cast<i128>(7)
+    i128 back = cast<i128>(0) - neg   // 7
+    i64 backLo = cast<i64>(back)      // 7
+
+    // Compose an exit code from the pieces:
+    //   prodLo(15) + rLo(1) + andLo(5) + shrLo(1) + backLo(7) = 29
+    i32 result = cast<i32>(prodLo) + cast<i32>(rLo) + cast<i32>(andLo) + cast<i32>(shrLo) + cast<i32>(backLo)
+
+    // Comparisons across both halves (unsigned and signed).
+    u128 lo3 = (cast<u128>(1) << 64) + cast<u128>(3)
+    u128 lo5 = (cast<u128>(1) << 64) + cast<u128>(5)
+    if lo3 < lo5 { result = result + 1 }       // 30
+    if lo5 >= lo3 { result = result + 1 }      // 31
+    if neg < cast<i128>(1) { result = result + 1 }  // signed -7 < 1 -> 32
+
+    // Call boundary: addsub(4, 5) = 4+5-1 = 8 ; take its low word.
+    u128 cr = addsub(cast<u128>(4), cast<u128>(5))
+    result = result + cast<i32>(cast<u64>(cr))  // 32 + 8 = 40
+
+    // blend(3, 10, 2, 20) = 10+20+3+2 = 35 ; low word.
+    u128 br = blend(3, cast<u128>(10), 2, cast<u128>(20))
+    result = result + cast<i32>(cast<u64>(br))  // 40 + 35 = 75
+
+    return result
+}

@@ -1,0 +1,9 @@
+module main
+
+// A compile-time-constant index that is out of range for a fixed array is a hard
+// error under --bounds-check (no runtime check is emitted; it cannot succeed).
+
+fun main() -> i32 {
+    i32[3] a
+    return a[5]
+}

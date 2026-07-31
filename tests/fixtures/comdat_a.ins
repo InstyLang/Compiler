@@ -1,0 +1,21 @@
+module comdat_a
+
+import std::vec
+
+// Instantiates Vector<i64>. `comdat_b` instantiates it too, so both objects carry
+// a copy of every Vector<i64> method.
+export fun sum_a(i64 n) -> i64 {
+    Vector<i64> v = Vector<i64>()
+    i64 i = 0
+    while i < n {
+        v.push(i)
+        i = i + 1
+    }
+    i64 total = 0
+    i = 0
+    while i < v.len() {
+        total = total + v.get(i)
+        i = i + 1
+    }
+    return total
+}

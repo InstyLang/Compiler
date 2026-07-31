@@ -1,0 +1,33 @@
+module main
+
+// WASI console I/O for the wasm32_wasi target.
+//
+// Everything else in the wasm test suite checks a return value. This checks what
+// the program actually *wrote*, which is the only way to exercise the whole path:
+// a string literal in the data segment, a Ciovec built on the shadow stack, and a
+// wasm import call into the host.
+
+import wasi::io
+
+fun main() -> i32 {
+    wasi.println("hello from wasm")
+
+    wasi.print("the answer is ")
+    wasi.println_int(42)
+
+    // Negative numbers, zero, and a value needing several digits.
+    wasi.println_int(-1234)
+    wasi.println_int(0)
+    wasi.println_int(9876543210)
+
+    // print without a newline, then close the line separately.
+    wasi.print("a")
+    wasi.print("b")
+    wasi.print("c")
+    wasi.println("")
+
+    // stderr is a separate descriptor and must not appear on stdout.
+    wasi.eprintln("to stderr")
+
+    return 0
+}

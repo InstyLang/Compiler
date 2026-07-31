@@ -1,0 +1,44 @@
+module main
+
+// Exercises the custom-backend f16 (half) support: storage is packed 16-bit,
+// values compute as f32 in registers via F16C (vcvtph2ps/vcvtps2ph). Covers
+// locals, arithmetic, the call ABI (params + return), and casts.
+
+fun addh(f16 a, f16 b) -> f16 {
+    return a + b
+}
+
+fun scale(f16 x) -> f16 {
+    // 2.5 is exactly representable in half precision.
+    return x * cast<f16>(2.5)
+}
+
+fun main() -> i32 {
+    i32 acc = 0
+
+    // Local f16 arithmetic: 2.0 + 3.0 == 5.0 (all exact in half).
+    f16 a = cast<f16>(2.0)
+    f16 b = cast<f16>(3.0)
+    f16 s = a + b
+    acc = acc + cast<i32>(s)                 // +5  -> 5
+
+    // Through the call ABI (params + return): addh(4.0, 6.0) == 10.0
+    f16 c = addh(cast<f16>(4.0), cast<f16>(6.0))
+    acc = acc + cast<i32>(c)                 // +10 -> 15
+
+    // Multiply via a call: scale(8.0) == 20.0
+    f16 d = scale(cast<f16>(8.0))
+    acc = acc + cast<i32>(d)                 // +20 -> 35
+
+    // f16 -> f64 widening through a cast (1.5 is exact in half).
+    f16 h = cast<f16>(1.5)
+    f64 w = cast<f64>(h) + cast<f64>(h)      // 1.5 + 1.5 = 3.0
+    acc = acc + cast<i32>(w)                 // +3  -> 38
+
+    // f16 -> f32 -> i32 chain.
+    f16 e = cast<f16>(7.0)
+    f32 f = cast<f32>(e)
+    acc = acc + cast<i32>(f)                 // +7  -> 45
+
+    return acc                               // 5+10+20+3+7 = 45
+}

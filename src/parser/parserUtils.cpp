@@ -284,3 +284,19 @@ std::vector<AST::Attribute> Parser::parseAttributes() {
     match(TokenType::RBracket);
     return attrs;
 }
+
+bool Parser::parseRawAsmBody(const Token& open, AST::InlineAsmExpr& node) {
+    // The lexer already set the body aside as one AsmBody token, so there is
+    // nothing to re-scan: its contents were never tokenized as Insty and may
+    // contain quotes, apostrophes and unbalanced punctuation inside comments.
+    if (!check(TokenType::AsmBody)) {
+        errorAt(open, "E1306", "expected an assembly body after '('",
+                "write the instructions inside the parentheses");
+        return false;
+    }
+    node.rawBody = current().value;
+    advance();
+    expect(TokenType::RParen, "E1306", "')' to close asm");
+    match(TokenType::RParen);
+    return true;
+}

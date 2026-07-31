@@ -1,0 +1,116 @@
+// Insty standard library: bits
+//
+// Bit/flag helpers for u64 values. These are small, freestanding building
+// blocks for binary formats, allocators, page tables, and packed flags.
+
+module bits
+
+export fun has(u64 flags, u64 mask) -> bool {
+    return (flags & mask) == mask
+}
+
+export fun any(u64 flags, u64 mask) -> bool {
+    return (flags & mask) != 0
+}
+
+export fun set(u64 flags, u64 mask) -> u64 {
+    return flags | mask
+}
+
+export fun clear(u64 flags, u64 mask) -> u64 {
+    return flags & (mask ^ cast<u64>(0 - 1))
+}
+
+export fun toggle(u64 flags, u64 mask) -> u64 {
+    return flags ^ mask
+}
+
+export fun update(u64 flags, u64 mask, bool enabled) -> u64 {
+    if enabled {
+        return set(flags, mask)
+    }
+    return clear(flags, mask)
+}
+
+export fun is_pow2(u64 n) -> bool {
+    if n == 0 {
+        return false
+    }
+    return (n & (n - 1)) == 0
+}
+
+// Round up to a power-of-two alignment. align must be a power of two.
+export fun align_up(u64 value, u64 align) -> u64 {
+    if align == 0 {
+        return value
+    }
+    u64 mask = align - 1
+    return (value + mask) & (mask ^ cast<u64>(0 - 1))
+}
+
+// Round down to a power-of-two alignment. align must be a power of two.
+export fun align_down(u64 value, u64 align) -> u64 {
+    if align == 0 {
+        return value
+    }
+    u64 mask = align - 1
+    return value & (mask ^ cast<u64>(0 - 1))
+}
+
+// Smallest power of two >= n, or 0 on overflow.
+export fun next_pow2(u64 n) -> u64 {
+    if n <= 1 {
+        return 1
+    }
+    u64 p = 1
+    while p < n {
+        u64 next = p * 2
+        if next < p {
+            return 0
+        }
+        p = next
+    }
+    return p
+}
+
+export fun popcount(u64 n) -> u64 {
+    u64 x = n
+    u64 count = 0
+    while x != 0 {
+        count = count + (x & 1)
+        x = x >> 1
+    }
+    return count
+}
+
+// Number of trailing zero bits. Returns 64 for n == 0.
+export fun trailing_zeros(u64 n) -> u64 {
+    if n == 0 {
+        return 64
+    }
+    u64 x = n
+    u64 count = 0
+    while (x & 1) == 0 {
+        count = count + 1
+        x = x >> 1
+    }
+    return count
+}
+
+// Rotate left by amount modulo 64.
+export fun rotl(u64 n, u64 amount) -> u64 {
+    u64 r = amount - (amount / 64) * 64
+    if r == 0 {
+        return n
+    }
+    return (n << r) | (n >> (64 - r))
+}
+
+// Rotate right by amount modulo 64.
+export fun rotr(u64 n, u64 amount) -> u64 {
+    u64 r = amount - (amount / 64) * 64
+    if r == 0 {
+        return n
+    }
+    return (n >> r) | (n << (64 - r))
+}

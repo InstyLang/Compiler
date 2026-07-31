@@ -1,0 +1,9 @@
+module main
+
+import comdat_a
+import comdat_b
+
+// sum_a(5) = 0+1+2+3+4 = 10 ; sum_b(5) = 0+2+4+6+8 = 20 ; total 30.
+fun main() -> i32 {
+    return cast<i32>(comdat_a.sum_a(5) + comdat_b.sum_b(5))
+}

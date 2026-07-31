@@ -47,7 +47,22 @@ AST::NodePtr Parser::parseEnumDeclaration() {
             break;
         }
 
-        if (check(TokenType::Assign)) {
+        if (check(TokenType::LParen)) {
+            // Tagged-union payload: `Variant(Type, Type, ...)`.
+            advance();
+            skipNewlines();
+            while (!atEnd() && !check(TokenType::RParen)) {
+                variant.payloadTypes.push_back(parseTypeName());
+                skipNewlines();
+                if (!match(TokenType::Comma)) {
+                    break;
+                }
+                skipNewlines();
+            }
+            expect(TokenType::RParen, "E1446", "')' to close variant payload");
+            match(TokenType::RParen);
+            variant.value = nextImplicit++;
+        } else if (check(TokenType::Assign)) {
             advance();
             variant.hasExplicitValue = true;
             if (check(TokenType::IntegerLiteral)) {
