@@ -330,17 +330,10 @@ int CompilerDriver::runEmitTokens() {
 }
 
 int CompilerDriver::runEmitAst() {
-    int rc = 0;
-    for (const auto& input : config_.inputs) {
-        CompiledModule mod;
-        if (!compileFile(input, {}, {}, {}, {}, mod, false)) {
-            rc = 1;
-        } else {
-            std::cout << "# parsed module '" << mod.moduleName << "' from " << input
-                      << " (" << mod.exportedFunctions.size() << " functions)\n";
-        }
-    }
-    return rc;
+    // Same reasoning as runCheckOnly: analyzing each input in isolation leaves
+    // every imported name unresolved, so this reported a spurious error per call
+    // into any imported module.
+    return runSingleFilePipeline(/*checkOnly=*/true, /*printModuleSummary=*/true);
 }
 
 int CompilerDriver::runCheckOnly() {
@@ -350,7 +343,7 @@ int CompilerDriver::runCheckOnly() {
     return runSingleFilePipeline(/*checkOnly=*/true);
 }
 
-int CompilerDriver::runSingleFilePipeline(bool checkOnly) {
+int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummary) {
     if (config_.inputs.empty()) {
         std::cerr << "error: no input files\n";
         return 1;
@@ -451,6 +444,10 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly) {
                          importedClassTemplates, importedFunctionTemplates,
                          importedSumTypes)) {
             return 1;
+        }
+        if (printModuleSummary) {
+            std::cout << "# parsed module '" << mod.moduleName << "' from " << source
+                      << " (" << mod.exportedFunctions.size() << " functions)\n";
         }
         for (const auto& lib : mod.requiredLibs) {
             requiredLibSet.insert(lib);

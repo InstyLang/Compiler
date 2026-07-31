@@ -59,7 +59,7 @@ private:
     // and threads each module's exported symbols into the next, which is the
     // whole point: checking a file in isolation reports every imported name as
     // unknown.
-    int runSingleFilePipeline(bool checkOnly = false);
+    int runSingleFilePipeline(bool checkOnly = false, bool printModuleSummary = false);
 
     // Rejects command-line options the selected target cannot act on, so they
     // fail loudly instead of being silently ignored.
@@ -69,4 +69,5 @@ private:
 };
 
 }
+
 

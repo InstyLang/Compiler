@@ -638,6 +638,32 @@ if(INSTY_BUILD_TESTS)
         # sizes against measured field/array strides, and -- because narrowing an
         # enum narrows its loads and stores -- that values survive, including
         # unsigned ones (255 in a u8 enum must not read back as -1). Returns 66.
+        # `--check` and `--emit-ast` must resolve the import graph. Both used to
+        # analyse each input in isolation with an empty module context, so every
+        # call into an imported module was reported as an unknown function -- which
+        # made them useless for any program that touches the standard library, and
+        # broke the editor/playground tooling built on them. wsl_stdlib.ins imports
+        # six std modules, so a regression here fails loudly. ctest treats a
+        # non-zero exit as failure, which is exactly the assertion wanted.
+        add_test(
+            NAME insty_check_resolves_imports
+            COMMAND insty --check
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wsl_stdlib.ins
+        )
+        add_test(
+            NAME insty_emit_ast_resolves_imports
+            COMMAND insty --emit-ast
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wsl_stdlib.ins
+        )
+        # ...and must still report a real error rather than passing everything.
+        add_test(
+            NAME insty_check_reports_real_errors
+            COMMAND insty --check
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bad_type.ins
+        )
+        set_tests_properties(insty_check_reports_real_errors
+                             PROPERTIES WILL_FAIL TRUE)
+
         # Raw `asm [keep(reg)]( ... NASM ... )` blocks: real assembly assembled by
         # the backend, `$var` operands resolved to stack slots, and the function
         # keeping its normal prologue/epilogue. Returns 99.
@@ -1853,5 +1879,6 @@ if(INSTY_BUILD_TESTS)
         endif()
     endif()
 endif()
+
 
 
