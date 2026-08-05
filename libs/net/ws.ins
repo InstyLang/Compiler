@@ -6,12 +6,12 @@
 
 module ws
 
-export fun err_not_implemented() -> i64 { return 0 - 38 }
+export fun errNotImplemented() -> i64 { return 0 - 38 }
 
-export fun client_connect_ipv4(u32 addr, u16 port, text host, text path) -> i64 {
-    return err_not_implemented()
+export fun clientConnectIpv4(u32 addr, u16 port, text host, text path) -> i64 {
+    return errNotImplemented()
 }
 
-export fun server_accept(i64 tcp_client) -> i64 {
-    return err_not_implemented()
+export fun serverAccept(i64 tcpClient) -> i64 {
+    return errNotImplemented()
 }

@@ -11,29 +11,29 @@ import net::tcp
 
 export fun crlf() -> text { return "\r\n" }
 
-export fun write_response_text(i64 client, i32 status, text reason, text body) -> bool {
-    if !tcp.write_text(client, "HTTP/1.1 ") { return false }
-    if !write_i32(client, status) { return false }
-    if !tcp.write_text(client, " ") { return false }
-    if !tcp.write_text(client, reason) { return false }
-    if !tcp.write_text(client, "\r\nContent-Type: text/plain\r\nContent-Length: ") { return false }
-    if !write_i64(client, str.len(body)) { return false }
-    if !tcp.write_text(client, "\r\nConnection: close\r\n\r\n") { return false }
-    return tcp.write_text(client, body)
+export fun writeResponseText(i64 client, i32 status, text reason, text body) -> bool {
+    if !tcp.writeText(client, "HTTP/1.1 ") { return false }
+    if !writeI32(client, status) { return false }
+    if !tcp.writeText(client, " ") { return false }
+    if !tcp.writeText(client, reason) { return false }
+    if !tcp.writeText(client, "\r\nContent-Type: text/plain\r\nContent-Length: ") { return false }
+    if !writeI64(client, str.len(body)) { return false }
+    if !tcp.writeText(client, "\r\nConnection: close\r\n\r\n") { return false }
+    return tcp.writeText(client, body)
 }
 
-export fun write_get(i64 fd, text host, text path) -> bool {
-    if !tcp.write_text(fd, "GET ") { return false }
-    if !tcp.write_text(fd, path) { return false }
-    if !tcp.write_text(fd, " HTTP/1.1\r\nHost: ") { return false }
-    if !tcp.write_text(fd, host) { return false }
-    return tcp.write_text(fd, "\r\nUser-Agent: insty\r\nAccept: */*\r\nConnection: close\r\n\r\n")
+export fun writeGet(i64 fd, text host, text path) -> bool {
+    if !tcp.writeText(fd, "GET ") { return false }
+    if !tcp.writeText(fd, path) { return false }
+    if !tcp.writeText(fd, " HTTP/1.1\r\nHost: ") { return false }
+    if !tcp.writeText(fd, host) { return false }
+    return tcp.writeText(fd, "\r\nUser-Agent: insty\r\nAccept: */*\r\nConnection: close\r\n\r\n")
 }
 
-export fun get_ipv4(u32 addr, u16 port, text host, text path, u8* out, i64 max) -> i64 {
-    i64 fd = tcp.connect_ipv4(addr, port)
+export fun getIpv4(u32 addr, u16 port, text host, text path, u8* out, i64 max) -> i64 {
+    i64 fd = tcp.connectIpv4(addr, port)
     if fd < 0 { return fd }
-    if !write_get(fd, host, path) {
+    if !writeGet(fd, host, path) {
         tcp.close(fd)
         return 0 - 5
     }
@@ -49,27 +49,25 @@ export fun get_ipv4(u32 addr, u16 port, text host, text path, u8* out, i64 max) 
     return total
 }
 
-export fun serve_once_text(u32 addr, u16 port, text body) -> i64 {
-    i64 server = tcp.listen_ipv4(addr, port, 16)
+export fun serveOnceText(u32 addr, u16 port, text body) -> i64 {
+    i64 server = tcp.listenIpv4(addr, port, 16)
     if server < 0 { return server }
     i64 client = tcp.accept(server)
     if client >= 0 {
-        // Drain a little bit of the request so clients that wait for read after
-        // write work with this minimal server.
         u8[1024] scratch
         unsafe { tcp.read(client, cast<u8*>(&scratch), 1024) }
-        write_response_text(client, 200, "OK", body)
+        writeResponseText(client, 200, "OK", body)
         tcp.close(client)
     }
     tcp.close(server)
     return client
 }
 
-export fun write_i32(i64 fd, i32 value) -> bool {
-    return write_i64(fd, cast<i64>(value))
+export fun writeI32(i64 fd, i32 value) -> bool {
+    return writeI64(fd, cast<i64>(value))
 }
 
-export fun write_i64(i64 fd, i64 value) -> bool {
+export fun writeI64(i64 fd, i64 value) -> bool {
     u8[32] buf
     i64 n = value
     i64 pos = 31
@@ -77,7 +75,7 @@ export fun write_i64(i64 fd, i64 value) -> bool {
     if n == 0 {
         unsafe {
             buf[31] = cast<u8>('0')
-            return tcp.write_all(fd, cast<u8*>(&buf) + 31, 1)
+            return tcp.writeAll(fd, cast<u8*>(&buf) + 31, 1)
         }
     }
     if n < 0 {
@@ -95,6 +93,6 @@ export fun write_i64(i64 fd, i64 value) -> bool {
             buf[pos] = cast<u8>('-')
             pos = pos - 1
         }
-        return tcp.write_all(fd, cast<u8*>(&buf) + pos + 1, 31 - pos)
+        return tcp.writeAll(fd, cast<u8*>(&buf) + pos + 1, 31 - pos)
     }
 }

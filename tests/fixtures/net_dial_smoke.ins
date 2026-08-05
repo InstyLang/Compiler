@@ -4,34 +4,33 @@ import net::dial
 import std::io
 
 fun main() -> i32 {
-    // --- parse_ipv4 ---
-    u32 loopback = dial.parse_ipv4("127.0.0.1")
-    if loopback == 0 { io.eprintln("parse_ipv4 failed"); return 1 }
-    u32 bad = dial.parse_ipv4("not.an.ip")
-    if bad != 0 { io.eprintln("parse_ipv4 should have returned 0 for garbage"); return 2 }
+    // --- parseIpv4 ---
+    u32 loopback = dial.parseIpv4("127.0.0.1")
+    if loopback == 0 { io.eprintln("parseIpv4 failed"); return 1 }
+    u32 bad = dial.parseIpv4("not.an.ip")
+    if bad != 0 { io.eprintln("parseIpv4 should return 0 for garbage"); return 2 }
 
-    // --- tcp_connect (fails gracefully — no listener on 127.0.0.1:9) ---
-    dial.TcpStream conn = dial.tcp_connect("127.0.0.1", 9)
-    if conn.is_open() {
+    // --- tcpConnect (fails gracefully — no listener on 127.0.0.1:9) ---
+    dial.TcpStream conn = dial.tcpConnect("127.0.0.1", 9)
+    if conn.isOpen() {
         io.eprintln("unexpected: connected to discard port");
         conn.close()
         return 3
     }
-    // conn was never open; destructor is harmless.
 
-    // --- tcp_listen ---
-    dial.TcpListener srv = dial.tcp_listen("127.0.0.1", 0)
-    if !srv.is_open() { io.eprintln("tcp_listen failed"); return 4 }
+    // --- tcpListen ---
+    dial.TcpListener srv = dial.tcpListen("127.0.0.1", 0)
+    if !srv.isOpen() { io.eprintln("tcpListen failed"); return 4 }
     srv.close()
 
     // --- UdpSocket ---
-    dial.UdpSocket sock = dial.udp_bind("127.0.0.1", 0)
-    if !sock.is_open() { io.eprintln("udp_bind failed"); return 5 }
+    dial.UdpSocket sock = dial.udpBind("127.0.0.1", 0)
+    if !sock.isOpen() { io.eprintln("udpBind failed"); return 5 }
     sock.close()
 
     // --- string read/write helpers (no peer, just construct + call) ---
     dial.TcpStream s = TcpStream(-1, "")
-    String out = s.read_all()
+    String out = s.readAll()
     if out.len() != 0 { return 6 }
     s.close()
 

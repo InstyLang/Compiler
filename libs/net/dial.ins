@@ -6,14 +6,14 @@
 //     import net::dial
 //
 //     // client
-//     dial.TcpStream c = dial.tcp_connect("127.0.0.1", 8080)
-//     c.write_line("hello")
+//     dial.TcpStream c = dial.tcpConnect("127.0.0.1", 8080)
+//     c.writeLine("hello")
 //     c.close()
 //
 //     // server
-//     dial.TcpListener srv = dial.tcp_listen("0.0.0.0", 8080)
+//     dial.TcpListener srv = dial.tcpListen("0.0.0.0", 8080)
 //     dial.TcpStream client = srv.accept()
-//     client.write_line("200 ok")
+//     client.writeLine("200 ok")
 //     srv.close()
 //
 // Linux only for now (raw syscalls); wasm/Windows return error values
@@ -31,23 +31,20 @@ import net::udp
 // IPv4 address parsing
 // ---------------------------------------------------------------------------
 
-export fun parse_ipv4(text s) -> u32 {
+export fun parseIpv4(text s) -> u32 {
     u8[4] octets
     i64 dot = 0
     i64 start = 0
     i64 i = 0
     while i < 4 {
-        // Skip leading whitespace / dots before each octet.
         while start < str.len(s) && (str.byte_at(s, start) == cast<u8>(' ') || str.byte_at(s, start) == cast<u8>('.')) {
             start = start + 1
         }
-        // Find end of this octet.
         i64 end = start
         while end < str.len(s) && str.is_digit(str.byte_at(s, end)) {
             end = end + 1
         }
         if end == start { return 0 }
-        // Parse the decimal octet.
         i64 value = 0
         i64 pos = start
         while pos < end {
@@ -67,28 +64,26 @@ export fun parse_ipv4(text s) -> u32 {
 // ---------------------------------------------------------------------------
 
 export class TcpStream {
-    i64 fd          // socket descriptor, or -1 when closed
-    text remote     // "addr:port" label (informational)
+    i64 fd
+    text remote
 
     constructor(i64 _fd, text _remote) {
         this.fd = _fd
         this.remote = _remote
     }
 
-    fun is_open() -> bool {
+    fun isOpen() -> bool {
         return this.fd >= 0
     }
 
-    // Read up to max bytes into buf. Returns bytes read; 0 = EOF, negative = error.
     fun read(u8* buf, i64 max) -> i64 {
-        if !this.is_open() { return -1 }
+        if !this.isOpen() { return -1 }
         return tcp.read(this.fd, buf, max)
     }
 
-    // Read everything available into a String.
-    fun read_all() -> String {
+    fun readAll() -> String {
         String out = String()
-        if !this.is_open() { return out }
+        if !this.isOpen() { return out }
         u8[4096] buf
         while true {
             unsafe {
@@ -100,11 +95,9 @@ export class TcpStream {
         return out
     }
 
-    // Read until `delim` (inclusive, byte) or EOF. Returns the line, which
-    // may be empty on EOF.
-    fun read_until(u8 delim) -> String {
+    fun readUntil(u8 delim) -> String {
         String out = String()
-        if !this.is_open() { return out }
+        if !this.isOpen() { return out }
         while true {
             u8 b = 0
             unsafe {
@@ -117,34 +110,29 @@ export class TcpStream {
         return out
     }
 
-    // Read one CRLF-terminated line. Includes the trailing "\r\n" if present.
-    fun read_line() -> String {
-        return this.read_until(cast<u8>('\n'))
+    fun readLine() -> String {
+        return this.readUntil(cast<u8>('\n'))
     }
 
-    // Write raw bytes. Returns the number written, or negative on error.
-    fun write_bytes(u8* buf, i64 count) -> i64 {
-        if !this.is_open() { return -1 }
+    fun writeBytes(u8* buf, i64 count) -> i64 {
+        if !this.isOpen() { return -1 }
         return tcp.write(this.fd, buf, count)
     }
 
-    // Write a string (no trailing newline added).
-    fun write_string(text s) -> bool {
-        if !this.is_open() { return false }
-        return tcp.write_text(this.fd, s)
+    fun writeString(text s) -> bool {
+        if !this.isOpen() { return false }
+        return tcp.writeText(this.fd, s)
     }
 
-    // Write a string followed by "\r\n".
-    fun write_line(text s) -> bool {
-        if !this.is_open() { return false }
-        return tcp.write_text(this.fd, s) && tcp.write_text(this.fd, "\r\n")
+    fun writeLine(text s) -> bool {
+        if !this.isOpen() { return false }
+        return tcp.writeText(this.fd, s) && tcp.writeText(this.fd, "\r\n")
     }
 
-    // Write an integer as decimal text.
-    fun write_int(i64 value) -> bool {
-        if !this.is_open() { return false }
+    fun writeInt(i64 value) -> bool {
+        if !this.isOpen() { return false }
         if value < 0 {
-            if !tcp.write_text(this.fd, "-") { return false }
+            if !tcp.writeText(this.fd, "-") { return false }
             value = 0 - value
         }
         u8[32] buf
@@ -152,7 +140,7 @@ export class TcpStream {
         if value == 0 {
             unsafe {
                 buf[31] = cast<u8>('0')
-                return tcp.write_all(this.fd, cast<u8*>(&buf) + 31, 1)
+                return tcp.writeAll(this.fd, cast<u8*>(&buf) + 31, 1)
             }
         }
         unsafe {
@@ -161,12 +149,12 @@ export class TcpStream {
                 value = value / 10
                 pos = pos - 1
             }
-            return tcp.write_all(this.fd, cast<u8*>(&buf) + pos + 1, 31 - pos)
+            return tcp.writeAll(this.fd, cast<u8*>(&buf) + pos + 1, 31 - pos)
         }
     }
 
     fun close() -> void {
-        if this.is_open() {
+        if this.isOpen() {
             tcp.close(this.fd)
             this.fd = -1
         }
@@ -188,20 +176,19 @@ export class TcpListener {
         this.fd = _fd
     }
 
-    fun is_open() -> bool {
+    fun isOpen() -> bool {
         return this.fd >= 0
     }
 
-    // Accept one connection. Blocks until a client connects.
     fun accept() -> TcpStream {
-        if !this.is_open() { return TcpStream(-1, "") }
-        i64 client_fd = tcp.accept(this.fd)
-        if client_fd < 0 { return TcpStream(-1, "") }
-        return TcpStream(client_fd, "")
+        if !this.isOpen() { return TcpStream(-1, "") }
+        i64 clientFd = tcp.accept(this.fd)
+        if clientFd < 0 { return TcpStream(-1, "") }
+        return TcpStream(clientFd, "")
     }
 
     fun close() -> void {
-        if this.is_open() {
+        if this.isOpen() {
             tcp.close(this.fd)
             this.fd = -1
         }
@@ -223,19 +210,18 @@ export class UdpSocket {
         this.fd = _fd
     }
 
-    fun is_open() -> bool {
+    fun isOpen() -> bool {
         return this.fd >= 0
     }
 
-    fun send_to(u32 addr, u16 port, text payload) -> i64 {
-        if !this.is_open() { return -1 }
-        unsafe { return udp.send_to_ipv4(this.fd, addr, port, cast<u8*>(payload), str.len(payload)) }
+    fun sendTo(u32 addr, u16 port, text payload) -> i64 {
+        if !this.isOpen() { return -1 }
+        unsafe { return udp.sendToIpv4(this.fd, addr, port, cast<u8*>(payload), str.len(payload)) }
     }
 
-    // Receive one datagram. Returns the payload as a String.
     fun recv() -> String {
         String out = String()
-        if !this.is_open() { return out }
+        if !this.isOpen() { return out }
         u8[2048] buf
         unsafe {
             i64 n = udp.recv(this.fd, cast<u8*>(&buf), 2048)
@@ -245,7 +231,7 @@ export class UdpSocket {
     }
 
     fun close() -> void {
-        if this.is_open() {
+        if this.isOpen() {
             udp.close(this.fd)
             this.fd = -1
         }
@@ -261,37 +247,34 @@ export class UdpSocket {
 // ---------------------------------------------------------------------------
 
 export fun ipv4(text a) -> u32 {
-    return parse_ipv4(a)
+    return parseIpv4(a)
 }
 
-// Connect to an IPv4 address and port. Returns a TcpStream; check .is_open().
-export fun tcp_connect(text addr, u16 port) -> TcpStream {
-    u32 ip = parse_ipv4(addr)
+export fun tcpConnect(text addr, u16 port) -> TcpStream {
+    u32 ip = parseIpv4(addr)
     if ip == 0 { return TcpStream(-1, "") }
-    i64 fd = tcp.connect_ipv4(ip, port)
+    i64 fd = tcp.connectIpv4(ip, port)
     if fd < 0 { return TcpStream(-1, "") }
     return TcpStream(fd, addr)
 }
 
-// Listen on IPv4 address and port. Returns a TcpListener; check .is_open().
-export fun tcp_listen(text addr, u16 port) -> TcpListener {
-    u32 ip = parse_ipv4(addr)
+export fun tcpListen(text addr, u16 port) -> TcpListener {
+    u32 ip = parseIpv4(addr)
     if ip == 0 { return TcpListener(-1) }
-    i64 fd = tcp.listen_ipv4(ip, port, 16)
+    i64 fd = tcp.listenIpv4(ip, port, 16)
     if fd < 0 { return TcpListener(-1) }
     return TcpListener(fd)
 }
 
-// Open a UDP socket and bind it to addr:port.
-export fun udp_bind(text addr, u16 port) -> UdpSocket {
+export fun udpBind(text addr, u16 port) -> UdpSocket {
     i64 fd = udp.open()
     if fd < 0 { return UdpSocket(-1) }
-    u32 ip = parse_ipv4(addr)
+    u32 ip = parseIpv4(addr)
     if ip == 0 {
         udp.close(fd)
         return UdpSocket(-1)
     }
-    i64 rc = udp.bind_ipv4(fd, ip, port)
+    i64 rc = udp.bindIpv4(fd, ip, port)
     if rc < 0 {
         udp.close(fd)
         return UdpSocket(-1)
