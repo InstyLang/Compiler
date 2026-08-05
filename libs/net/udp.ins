@@ -1,0 +1,52 @@
+// Insty standard library: net::udp
+//
+// Minimal hosted UDP sockets. Linux is implemented with raw syscalls; other
+// targets return negative error codes until their socket backends exist.
+
+module udp
+
+import std::syscall
+import net::tcp as tcp
+
+export fun sock_dgram() -> i32 { return 2 }
+export fun ipproto_udp() -> i32 { return 17 }
+export fun err_unsupported() -> i64 { return tcp.err_unsupported() }
+
+export fun open() -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys3(41, tcp.af_inet(), sock_dgram(), ipproto_udp()) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun close(i64 fd) -> i64 {
+    return tcp.close(fd)
+}
+
+export fun bind_ipv4(i64 fd, u32 addr, u16 port) -> i64 {
+    #if @targetIs("linux") {
+        tcp.SockAddrIn sa = tcp.sockaddr_ipv4(addr, port)
+        unsafe { return syscall.sys3(49, fd, cast<i64>(&sa), 16) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun send_to_ipv4(i64 fd, u32 addr, u16 port, u8* buf, i64 count) -> i64 {
+    #if @targetIs("linux") {
+        tcp.SockAddrIn sa = tcp.sockaddr_ipv4(addr, port)
+        unsafe { return syscall.sys6(44, fd, cast<i64>(buf), count, 0, cast<i64>(&sa), 16) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+// Receives the next datagram, discarding the source address. Returns bytes read.
+export fun recv(i64 fd, u8* buf, i64 count) -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys6(45, fd, cast<i64>(buf), count, 0, 0, 0) }
+    } #else {
+        return err_unsupported()
+    }
+}

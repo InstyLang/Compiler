@@ -1,0 +1,140 @@
+// Insty standard library: net::tcp
+//
+// Minimal hosted TCP sockets. Linux is implemented with raw syscalls; other
+// targets return negative error codes until their socket backends exist.
+
+module tcp
+
+import std::syscall
+import std::str
+
+export fun af_inet() -> i32 { return 2 }
+export fun sock_stream() -> i32 { return 1 }
+export fun ipproto_tcp() -> i32 { return 6 }
+
+// Linux errno-style negative values used by this module for unsupported paths.
+export fun err_unsupported() -> i64 { return 0 - 38 }
+
+export struct SockAddrIn {
+    u16 family,
+    u16 port,
+    u32 addr,
+    u8[8] zero
+}
+
+export fun htons(u16 value) -> u16 {
+    return cast<u16>(((cast<u32>(value) & 0x00ff) << 8) | ((cast<u32>(value) & 0xff00) >> 8))
+}
+
+export fun hton32(u32 value) -> u32 {
+    u32 out = (value & 0x000000ff) << 24
+    out = out | ((value & 0x0000ff00) << 8)
+    out = out | ((value & 0x00ff0000) >> 8)
+    out = out | cast<u32>((value & 0xff000000) >> 24)
+    return out
+}
+
+export fun ipv4(u8 a, u8 b, u8 c, u8 d) -> u32 {
+    u32 out = cast<u32>(a) << 24
+    out = out | (cast<u32>(b) << 16)
+    out = out | (cast<u32>(c) << 8)
+    out = out | cast<u32>(d)
+    return out
+}
+
+export fun sockaddr_ipv4(u32 addr, u16 port) -> SockAddrIn {
+    SockAddrIn out
+    out.family = cast<u16>(af_inet())
+    out.port = htons(port)
+    out.addr = hton32(addr)
+    return out
+}
+
+export fun open() -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys3(41, af_inet(), sock_stream(), ipproto_tcp()) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun close(i64 fd) -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys1(3, fd) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun connect_ipv4(u32 addr, u16 port) -> i64 {
+    i64 fd = open()
+    if fd < 0 { return fd }
+    SockAddrIn sa = sockaddr_ipv4(addr, port)
+    unsafe {
+        i64 rc = syscall.sys3(42, fd, cast<i64>(&sa), 16)
+        if rc < 0 {
+            close(fd)
+            return rc
+        }
+    }
+    return fd
+}
+
+export fun listen_ipv4(u32 addr, u16 port, i32 backlog) -> i64 {
+    i64 fd = open()
+    if fd < 0 { return fd }
+    SockAddrIn sa = sockaddr_ipv4(addr, port)
+    unsafe {
+        i64 rc = syscall.sys3(49, fd, cast<i64>(&sa), 16)
+        if rc < 0 {
+            close(fd)
+            return rc
+        }
+        rc = syscall.sys2(50, fd, backlog)
+        if rc < 0 {
+            close(fd)
+            return rc
+        }
+    }
+    return fd
+}
+
+export fun accept(i64 fd) -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys3(43, fd, 0, 0) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun read(i64 fd, u8* buf, i64 count) -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys3(0, fd, cast<i64>(buf), count) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun write(i64 fd, u8* buf, i64 count) -> i64 {
+    #if @targetIs("linux") {
+        unsafe { return syscall.sys3(1, fd, cast<i64>(buf), count) }
+    } #else {
+        return err_unsupported()
+    }
+}
+
+export fun write_all(i64 fd, u8* buf, i64 count) -> bool {
+    i64 total = 0
+    while total < count {
+        unsafe {
+            i64 n = write(fd, buf + total, count - total)
+            if n <= 0 { return false }
+            total = total + n
+        }
+    }
+    return true
+}
+
+export fun write_text(i64 fd, text value) -> bool {
+    unsafe { return write_all(fd, cast<u8*>(value), str.len(value)) }
+}

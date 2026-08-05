@@ -1,0 +1,100 @@
+// Insty standard library: net::http
+//
+// Small blocking HTTP/1.1 helpers over net::tcp. This is intentionally minimal:
+// enough for simple clients/servers and for higher-level APIs to share request
+// and response formatting. It does not parse chunked transfer encoding yet.
+
+module http
+
+import std::str
+import net::tcp
+
+export fun crlf() -> text { return "\r\n" }
+
+export fun write_response_text(i64 client, i32 status, text reason, text body) -> bool {
+    if !tcp.write_text(client, "HTTP/1.1 ") { return false }
+    if !write_i32(client, status) { return false }
+    if !tcp.write_text(client, " ") { return false }
+    if !tcp.write_text(client, reason) { return false }
+    if !tcp.write_text(client, "\r\nContent-Type: text/plain\r\nContent-Length: ") { return false }
+    if !write_i64(client, str.len(body)) { return false }
+    if !tcp.write_text(client, "\r\nConnection: close\r\n\r\n") { return false }
+    return tcp.write_text(client, body)
+}
+
+export fun write_get(i64 fd, text host, text path) -> bool {
+    if !tcp.write_text(fd, "GET ") { return false }
+    if !tcp.write_text(fd, path) { return false }
+    if !tcp.write_text(fd, " HTTP/1.1\r\nHost: ") { return false }
+    if !tcp.write_text(fd, host) { return false }
+    return tcp.write_text(fd, "\r\nUser-Agent: insty\r\nAccept: */*\r\nConnection: close\r\n\r\n")
+}
+
+export fun get_ipv4(u32 addr, u16 port, text host, text path, u8* out, i64 max) -> i64 {
+    i64 fd = tcp.connect_ipv4(addr, port)
+    if fd < 0 { return fd }
+    if !write_get(fd, host, path) {
+        tcp.close(fd)
+        return 0 - 5
+    }
+    i64 total = 0
+    unsafe {
+        while total < max {
+            i64 n = tcp.read(fd, out + total, max - total)
+            if n <= 0 { break }
+            total = total + n
+        }
+    }
+    tcp.close(fd)
+    return total
+}
+
+export fun serve_once_text(u32 addr, u16 port, text body) -> i64 {
+    i64 server = tcp.listen_ipv4(addr, port, 16)
+    if server < 0 { return server }
+    i64 client = tcp.accept(server)
+    if client >= 0 {
+        // Drain a little bit of the request so clients that wait for read after
+        // write work with this minimal server.
+        u8[1024] scratch
+        unsafe { tcp.read(client, cast<u8*>(&scratch), 1024) }
+        write_response_text(client, 200, "OK", body)
+        tcp.close(client)
+    }
+    tcp.close(server)
+    return client
+}
+
+export fun write_i32(i64 fd, i32 value) -> bool {
+    return write_i64(fd, cast<i64>(value))
+}
+
+export fun write_i64(i64 fd, i64 value) -> bool {
+    u8[32] buf
+    i64 n = value
+    i64 pos = 31
+    bool neg = false
+    if n == 0 {
+        unsafe {
+            buf[31] = cast<u8>('0')
+            return tcp.write_all(fd, cast<u8*>(&buf) + 31, 1)
+        }
+    }
+    if n < 0 {
+        neg = true
+        n = 0 - n
+    }
+    unsafe {
+        while n > 0 && pos >= 0 {
+            i64 d = n % 10
+            buf[pos] = cast<u8>('0') + cast<u8>(d)
+            n = n / 10
+            pos = pos - 1
+        }
+        if neg {
+            buf[pos] = cast<u8>('-')
+            pos = pos - 1
+        }
+        return tcp.write_all(fd, cast<u8*>(&buf) + pos + 1, 31 - pos)
+    }
+}

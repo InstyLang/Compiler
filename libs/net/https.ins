@@ -1,0 +1,13 @@
+// Insty standard library: net::https
+//
+// HTTPS is HTTP over TLS. This project intentionally avoids native TLS
+// libraries; the pure Insty TLS 1.3 stack (hashes, AEAD ciphers, X.509
+// validation, transcript handling) must land before this module can be real.
+
+module https
+
+export fun err_not_implemented() -> i64 { return 0 - 38 }
+
+export fun get_ipv4(u32 addr, u16 port, text host, text path, u8* out, i64 max) -> i64 {
+    return err_not_implemented()
+}

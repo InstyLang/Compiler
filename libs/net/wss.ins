@@ -1,0 +1,12 @@
+// Insty standard library: net::wss
+//
+// Secure WebSocket is WebSocket over TLS. It depends on both net::ws and the
+// future pure Insty TLS stack.
+
+module wss
+
+export fun err_not_implemented() -> i64 { return 0 - 38 }
+
+export fun client_connect_ipv4(u32 addr, u16 port, text host, text path) -> i64 {
+    return err_not_implemented()
+}

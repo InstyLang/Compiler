@@ -1,0 +1,30 @@
+module main
+
+import net::tcp
+import net::udp
+import net::http
+import net::https
+import net::ws
+import net::wss
+import net::quic
+
+fun main() -> i32 {
+    u32 loopback = tcp.ipv4(127, 0, 0, 1)
+
+    i64 tcp_fd = tcp.open()
+    if tcp_fd < 0 { return 10 }
+    tcp.close(tcp_fd)
+
+    i64 udp_fd = udp.open()
+    if udp_fd < 0 { return 20 }
+    udp.close(udp_fd)
+
+    // HTTP formatting helpers should compile without needing a live peer.
+    if loopback == 0 { return 30 }
+    if https.err_not_implemented() >= 0 { return 40 }
+    if ws.err_not_implemented() >= 0 { return 41 }
+    if wss.err_not_implemented() >= 0 { return 42 }
+    if quic.err_not_implemented() >= 0 { return 43 }
+
+    return 0
+}

@@ -1,0 +1,17 @@
+// Insty standard library: net::ws
+//
+// WebSocket requires SHA-1 + base64 for the HTTP upgrade handshake and frame
+// masking/unmasking. The socket foundation is present, but the pure Insty
+// crypto/encoding pieces are not yet in stdlib.
+
+module ws
+
+export fun err_not_implemented() -> i64 { return 0 - 38 }
+
+export fun client_connect_ipv4(u32 addr, u16 port, text host, text path) -> i64 {
+    return err_not_implemented()
+}
+
+export fun server_accept(i64 tcp_client) -> i64 {
+    return err_not_implemented()
+}
