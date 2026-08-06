@@ -1,8 +1,8 @@
 module main
 
-import std::window
+import std::window.{Window, WindowEvent, Dim}
 
-fun onEvent(window.WindowEvent e) -> void {
+fun onEvent(WindowEvent e) -> void {
     switch e {
         Close => return
         KeyDown(code) => return
@@ -12,12 +12,12 @@ fun onEvent(window.WindowEvent e) -> void {
 }
 
 fun main() -> i32 {
-    // Struct literal — works.
-    window.Dim d = Dim{w: 800, h: 600}
+    // Struct literal constructor.
+    Dim d = Dim{w: 800, h: 600}
     if d.w != 800 { return 1 }
 
     // Closed window lifecycle is harmless.
-    window.Window w = Window()
+    Window w = Window()
     if w.isValid() { return 2 }
     w.close()
     w.setTitle("no crash")
@@ -25,13 +25,17 @@ fun main() -> i32 {
     // Register handler via function pointer.
     unsafe { w.on(cast<u64>(&onEvent)) }
 
-    // Unit variants cross module boundaries.
-    window.WindowEvent c = window.Close
-    window.WindowEvent p = window.Paint
+    // Unit variants work.
+    WindowEvent c = WindowEvent.Close
+    WindowEvent p = WindowEvent.Paint
     switch c {
         Close => {}
         _ => {}
     }
+
+    // Payload variant construction now works cross-module.
+    WindowEvent k = WindowEvent.KeyDown(65)
+    WindowEvent r = WindowEvent.Resize(1024, 768)
 
     w.blockExit()
 

@@ -2,22 +2,21 @@
 //
 // Cross-platform native windowing with a sum-type event model.
 //
-//     import std::window
+//     import std::window.{Window, WindowEvent, Dim}
 //
-//     fun onEvent(window.WindowEvent e) -> void {
+//     fun onEvent(WindowEvent e) -> void {
 //         switch e {
-//             window.Close => { }
-//             window.KeyDown(code) => { }
-//             window.Resize(w, h) => { }
+//             Close => { }
+//             KeyDown(code) => { }
+//             Resize(w, h) => { }
 //             _ => {}
 //         }
 //     }
 //
 //     fun main() -> i32 {
-//         window.Window w = window.open("Hello", 800, 600)
-//         w.on(&onEvent)
+//         Window w = window.open("Hello", Dim{w: 800, h: 600})
+//         w.on(cast<u64>(&onEvent))
 //         w.start()
-//         w.blockExit()
 //     }
 //
 // Linux: Xlib (links libX11 automatically). Windows: Win32 user32.dll.
@@ -56,7 +55,6 @@ export enum WindowEvent {
 // ---------------------------------------------------------------------------
 
 export class Window {
-    // Platform handles and the user-registered callback.
     u64 platformHandle
     u64 platformHandle2
     u64 eventCallback
@@ -83,15 +81,10 @@ export class Window {
         windowSetTitlePtr(this, title)
     }
 
-    // Pumps events until the window is closed. Calls the registered callback for
-    // each event, then returns when the platform signals an exit.
     fun start() -> void {
         windowStartPtr(this)
     }
 
-    // Blocks the calling thread at a join point so the program doesn't exit
-    // before the event loop finishes. On most platforms start() already blocks;
-    // this is a no-op unless a platform's event loop runs asynchronously.
     fun blockExit() -> void {
     }
 }
@@ -106,13 +99,13 @@ import unix::x11
 extern fun [lib("X11")] XInternAtom(u64 display, text name, i32 onlyIfExists) -> u64
 extern fun [lib("X11")] XSetWMProtocols(u64 display, u64 window, u64* protocols, i32 count) -> i32
 
-export fun open(text title, i32 width, i32 height) -> Window {
+export fun open(text title, Dim size) -> Window {
     u64 dpy = x11.open_display("")
     if dpy == 0 { return Window() }
     i32 screen = x11.default_screen(dpy)
     u64 root = x11.root_window(dpy, screen)
-    u32 w = cast<u32>(width)
-    u32 h = cast<u32>(height)
+    u32 w = cast<u32>(size.w)
+    u32 h = cast<u32>(size.h)
     u64 win = x11.create_simple_window(dpy, root, 0, 0, w, h, 1,
         x11.black_pixel(dpy, screen), x11.white_pixel(dpy, screen))
     if win == 0 {
@@ -219,9 +212,6 @@ import windows::window as win32
 
 Vector<WindowEvent> eventQueue
 
-// The internal WNDPROC. Decodes common messages into WindowEvent values and
-// pushes them onto the module-level queue. The registered user callback is
-// NOT called from here (WNDPROCs must be fast); start() drains the queue.
 fun [mangle(off), name("InstyWndProc")] wndProc(u64 hwnd, u32 msg, u64 wParam, i64 lParam) -> i64 {
     if msg == win32.wm_close() || msg == win32.wm_destroy() {
         eventQueue.push(WindowEvent.Close)
@@ -254,12 +244,12 @@ fun [mangle(off), name("InstyWndProc")] wndProc(u64 hwnd, u32 msg, u64 wParam, i
     return win32.def_window_proc(hwnd, msg, wParam, lParam)
 }
 
-export fun open(text title, i32 width, i32 height) -> Window {
+export fun open(text title, Dim size) -> Window {
     u64 inst = win32.instance_handle()
     u64 proc = 0
     unsafe { proc = cast<u64>(&wndProc) }
     win32.register_class("InstyWndClass", proc, inst)
-    u64 hwnd = win32.create_window("InstyWndClass", title, width, height, inst)
+    u64 hwnd = win32.create_window("InstyWndClass", title, size.w, size.h, inst)
     if hwnd == 0 { return Window() }
     win32.show_default(hwnd)
     win32.update(hwnd)
@@ -283,7 +273,6 @@ fun windowStartPtr(Window* w) -> void {
     if !w.isValid() { return }
     u8[48] msgBuf
     while true {
-        // Drain queued events first.
         while eventQueue.len() > 0 {
             WindowEvent ev = eventQueue.get(0)
             eventQueue.pop()
@@ -322,7 +311,7 @@ eventQueue = Vector<WindowEvent>()
 
 #if !@targetIs("linux") && !@targetIs("windows") {
 
-export fun open(text title, i32 width, i32 height) -> Window {
+export fun open(text title, Dim size) -> Window {
     return Window()
 }
 
