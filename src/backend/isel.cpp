@@ -360,12 +360,18 @@ bool InstructionSelector::resolveSumVariant(const AST::MemberAccessExpr& m,
                                             const Sema::SumVariant*& vOut) const {
     stOut = nullptr;
     vOut = nullptr;
-    if (m.computed || !m.object ||
-        m.object->nodeType() != AST::NodeType::IdentifierExpr) {
-        return false;
+    if (m.computed || !m.object) return false;
+    std::string typeName;
+    if (m.object->nodeType() == AST::NodeType::IdentifierExpr) {
+        typeName = static_cast<const AST::IdentifierExpr&>(*m.object).name;
+    } else if (m.object->nodeType() == AST::NodeType::MemberAccess) {
+        auto& inner = static_cast<const AST::MemberAccessExpr&>(*m.object);
+        if (inner.isScope && inner.property &&
+            inner.property->nodeType() == AST::NodeType::IdentifierExpr) {
+            typeName = static_cast<const AST::IdentifierExpr&>(*inner.property).name;
+        }
     }
-    const std::string& typeName =
-        static_cast<const AST::IdentifierExpr&>(*m.object).name;
+    if (typeName.empty()) return false;
     const Sema::SumTypeInfo* st = sumTypeByName(typeName);
     if (!st) return false;
     stOut = st;
@@ -530,6 +536,9 @@ unsigned InstructionSelector::alignOf(Types::TypeRef t) const {
     }
     // A float aligns to its own precision, matching its size above.
     if (isFloatType(t)) return floatWidthOf(t);
+    if (t->kind == Types::Kind::Any) return 8;
+    if (t->kind == Types::Kind::Object) return 8;
+    if (t->kind == Types::Kind::Closure) return 8;
     return widthOf(t);
 }
 
@@ -565,6 +574,9 @@ unsigned InstructionSelector::sizeOf(Types::TypeRef t) const {
     // globals by precision, so this is also what keeps aggregate fields and globals
     // agreeing on one layout.
     if (isFloatType(t)) return floatWidthOf(t);
+    if (t->kind == Types::Kind::Any) return 24;
+    if (t->kind == Types::Kind::Object) return 8;
+    if (t->kind == Types::Kind::Closure) return 8;
     return widthOf(t);
 }
 
@@ -659,6 +671,10 @@ InstructionSelector::classifyAggregate(Types::TypeRef t) const {
     AggregateAbi r;
     r.size = sizeOf(t);
     const bool isAggregate = isAggregateType(t);
+    if (t && t->kind == Types::Kind::Any) {
+        r.inMemory = true;
+        return r;
+    }
     if (!isAggregate) {
         // Convenience: treat a scalar as a single INTEGER eightbyte.
         r.inMemory = false;
@@ -858,6 +874,18 @@ std::unique_ptr<MFunction> InstructionSelector::selectBody(
         } else {
             sretActive_ = true;
             sretSlot_ = fn_->addFrameSlot(8, 8, /*isSpill=*/false);
+            MInst st{MOpcode::Store,
+                     {MOperand::slot(sretSlot_), MOperand::usePhys(argRegs[0])}};
+            st.width = 8; st.isSigned = false;
+            emit(st);
+            regBase = 1;
+        }
+    } else if (returnType_ && returnType_->kind == Types::Kind::Any) {
+        if (argRegs.empty()) {
+            fail("selector: no register available for any return pointer");
+        } else {
+            sretActive_ = true;
+            sretSlot_ = fn_->addFrameSlot(8, 8, false);
             MInst st{MOpcode::Store,
                      {MOperand::slot(sretSlot_), MOperand::usePhys(argRegs[0])}};
             st.width = 8; st.isSigned = false;
@@ -1159,8 +1187,43 @@ std::unique_ptr<MFunction> InstructionSelector::selectBody(
             // else: fall through to the hidden-pointer (memory) handling below.
         }
 
+        if (pty && pty->kind == Types::Kind::Any) {
+            unsigned sz = sizeOf(pty), al = alignOf(pty);
+            std::uint32_t slot = fn_->addFrameSlot(sz, al, false);
+            declareLocal(paramNames[i], slot, 8, false,
+                         LocalKind::AggregateValue, false, pty);
+            VReg baseAddr = fn_->newVReg();
+            emit({MOpcode::LeaSlot, {MOperand::defVReg(baseAddr), MOperand::slot(slot)}});
+            VReg ptr = fn_->newVReg();
+            auto preSp = i128IncomingSlots.find(i);
+            if (preSp != i128IncomingSlots.end()) {
+                MInst ld{MOpcode::Load, {MOperand::defVReg(ptr), MOperand::slot(preSp->second[0])}};
+                ld.width = 8; ld.isSigned = false; emit(ld);
+                ++gpCursor;
+                if (abi_.sharedArgRegIndex) ++xmmCursor;
+            } else if (gpCursor < argRegs.size()) {
+                emit({MOpcode::MovRR, {MOperand::defVReg(ptr), MOperand::usePhys(argRegs[gpCursor])}});
+                ++gpCursor;
+                if (abi_.sharedArgRegIndex) ++xmmCursor;
+            } else {
+                std::int64_t inOff = 16 + static_cast<std::int64_t>(abi_.shadowSpace) +
+                                     8 * static_cast<std::int64_t>(stackArgIndex);
+                std::uint32_t inSlot = fn_->addFrameSlot(8, 8, false);
+                fn_->frameSlots()[inSlot].isIncoming = true;
+                fn_->frameSlots()[inSlot].rbpOffset = inOff;
+                MInst ld{MOpcode::Load, {MOperand::defVReg(ptr), MOperand::slot(inSlot)}};
+                ld.width = 8; ld.isSigned = false; emit(ld);
+                ++stackArgIndex;
+                ++gpCursor;
+                if (abi_.sharedArgRegIndex) ++xmmCursor;
+            }
+            emitStructCopy(ElemAddr{baseAddr, 0}, ElemAddr{ptr, 0}, sz);
+            continue;
+        }
+
         if (!isAggregate && !isIntegerLike(pty) && pty &&
-            pty->kind != Types::Kind::Pointer && pty->kind != Types::Kind::Text) {
+            pty->kind != Types::Kind::Pointer && pty->kind != Types::Kind::Text &&
+            pty->kind != Types::Kind::Any && pty->kind != Types::Kind::Object) {
             fail("selector: unsupported parameter type for '" + paramNames[i] + "'");
             break;
         }
@@ -1291,10 +1354,6 @@ void InstructionSelector::selStatement(const AST::NodePtr& stmt) {
             return;
         case AST::NodeType::SwitchStatement:
             selSwitch(static_cast<const AST::SwitchStatement&>(*stmt));
-            finishStatement();
-            return;
-        case AST::NodeType::MatchStatement:
-            selMatch(static_cast<const AST::MatchStatement&>(*stmt));
             finishStatement();
             return;
         case AST::NodeType::BreakStatement:
@@ -1587,8 +1646,24 @@ void InstructionSelector::selVarDecl(const AST::VariableDeclarationExpr& decl) {
         maybeRegisterCleanup(ty, slot);
         return;
     }
+    if (ty && ty->kind == Types::Kind::Any) {
+        unsigned sz = sizeOf(ty), al = alignOf(ty);
+        std::uint32_t slot = fn_->addFrameSlot(sz, al, false);
+        declareLocal(decl.identifier, slot, 8, false, LocalKind::AggregateValue,
+                     false, ty);
+        if (decl.initialValue) {
+            VReg dstAddr = fn_->newVReg();
+            emit({MOpcode::LeaSlot, {MOperand::defVReg(dstAddr), MOperand::slot(slot)}});
+            ElemAddr src = computeLValueAddr(decl.initialValue.get());
+            if (failed_) return;
+            emitStructCopy(ElemAddr{dstAddr, 0}, src, sz);
+        }
+        return;
+    }
     if (ty && !isFloatType(ty) && !isIntegerLike(ty) && ty->kind != Types::Kind::Pointer &&
-        ty->kind != Types::Kind::Text && ty->kind != Types::Kind::Function) {
+        ty->kind != Types::Kind::Text && ty->kind != Types::Kind::Function &&
+        ty->kind != Types::Kind::Any && ty->kind != Types::Kind::Object &&
+        ty->kind != Types::Kind::Closure) {
         fail("selector: unsupported variable type for '" + decl.identifier + "'");
         return;
     }
@@ -2100,65 +2175,12 @@ void InstructionSelector::selWhen(const AST::WhenStatement& s) {
 }
 
 void InstructionSelector::selSwitch(const AST::SwitchStatement& s) {
-    // Lowered as a chain of equality tests against `subject`. Each arm's patterns
-    // are OR'd (any match enters the arm body); arm bodies do NOT fall through to
-    // the next arm -- each jumps to the shared join. A `default` arm is entered
-    // unconditionally once all preceding tests miss; with no default, a total miss
-    // falls through to the join.
-    std::uint32_t joinB = fn_->addBlock();
-
-    // Pre-allocate one body block per arm so we can branch to them from the
-    // dispatch chain (which is emitted before the bodies).
-    std::vector<std::uint32_t> bodyBlocks;
-    bodyBlocks.reserve(s.arms.size());
-    for (size_t i = 0; i < s.arms.size(); ++i) bodyBlocks.push_back(fn_->addBlock());
-
-    int defaultIdx = -1;
-    for (size_t ai = 0; ai < s.arms.size(); ++ai) {
-        const AST::SwitchArm& arm = s.arms[ai];
-        if (arm.isDefault) {
-            defaultIdx = static_cast<int>(ai);
-            continue;
-        }
-        for (const auto& pat : arm.patterns) {
-            // Compare subject == pattern. A match branches into this arm's body;
-            // a miss continues the dispatch chain in a fresh block.
-            Cond eqCond;
-            if (!emitCompare(s.subject, pat, "==", eqCond)) return;
-            std::uint32_t missB = fn_->addBlock();
-            MInst jcc{MOpcode::Jcc, {MOperand::lbl(bodyBlocks[ai])}};
-            jcc.cond = eqCond;
-            emit(jcc);
-            emit({MOpcode::Jmp, {MOperand::lbl(missB)}});
-            curBlock_ = missB;
-        }
-    }
-
-    // All explicit patterns missed: enter the default arm if present, else join.
-    if (defaultIdx >= 0) {
-        emit({MOpcode::Jmp, {MOperand::lbl(bodyBlocks[defaultIdx])}});
-    } else {
-        emit({MOpcode::Jmp, {MOperand::lbl(joinB)}});
-    }
-
-    // Emit each arm body; bodies converge on the join (no fall-through).
-    for (size_t ai = 0; ai < s.arms.size(); ++ai) {
-        curBlock_ = bodyBlocks[ai];
-        selBlock(s.arms[ai].body);
-        if (failed_) return;
-        emit({MOpcode::Jmp, {MOperand::lbl(joinB)}});
-    }
-
-    curBlock_ = joinB;
-}
-
-void InstructionSelector::selMatch(const AST::MatchStatement& s) {
     Types::TypeRef subjTy = concreteTypeOf(s.subject.get());
     const Sema::SumTypeInfo* st =
         (subjTy && subjTy->kind == Types::Kind::Struct) ? sumTypeByName(subjTy->name)
                                                         : nullptr;
     if (!st) {
-        fail("selector: match subject is not a tagged-union value");
+        fail("selector: switch subject is not a tagged-union value");
         return;
     }
 
@@ -2180,7 +2202,7 @@ void InstructionSelector::selMatch(const AST::MatchStatement& s) {
     // Dispatch chain: load the tag, compare against each named variant.
     int defaultIdx = -1;
     for (size_t ai = 0; ai < s.arms.size(); ++ai) {
-        const AST::MatchArm& arm = s.arms[ai];
+        const AST::SwitchArm& arm = s.arms[ai];
         if (arm.isDefault) { defaultIdx = static_cast<int>(ai); continue; }
         // Find this arm's variant tag.
         long long tagVal = 0;
@@ -2216,7 +2238,7 @@ void InstructionSelector::selMatch(const AST::MatchStatement& s) {
     // base) as locals, then runs the body in a fresh scope.
     for (size_t ai = 0; ai < s.arms.size(); ++ai) {
         curBlock_ = bodyBlocks[ai];
-        const AST::MatchArm& arm = s.arms[ai];
+        const AST::SwitchArm& arm = s.arms[ai];
         pushScope();
         if (!arm.isDefault && !arm.bindings.empty()) {
             const Sema::SumVariant* v = nullptr;
@@ -2614,9 +2636,104 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
             return selAddressOf(a);
         }
         case AST::NodeType::Lambda: {
-            // A lambda value is the address of its lifted function (a plain,
-            // non-capturing function pointer): RIP-relative LEA of its symbol.
             const auto& lam = static_cast<const AST::LambdaExpr&>(*expr);
+            if (!lam.captures.empty()) {
+                // Capturing lambda: allocate { fn_ptr, cap1, cap2, ... } on the
+                // heap and return a pointer to it. The env struct was registered
+                // by sema; compute its total size and the offset of each field.
+                const Sema::StructInfo* si = nullptr;
+                for (const auto& s : sema_.structs) {
+                    if (s.name == lam.envStructName) { si = &s; break; }
+                }
+                if (!si) {
+                    fail("selector: closure env struct '" + lam.envStructName +
+                         "' not registered");
+                    return kInvalidVReg;
+                }
+                unsigned envSz = 0;
+                std::vector<unsigned> fieldOffs;
+                for (unsigned fi = 0; fi < si->fields.size(); ++fi) {
+                    fieldOffs.push_back(envSz);
+                    unsigned fa = si->packed ? 1 : alignOf(si->fields[fi].second);
+                    envSz = alignUp(envSz, fa);
+                    envSz += sizeOf(si->fields[fi].second);
+                }
+                if (envSz == 0) envSz = 8;
+                VReg sizeV = fn_->newVReg();
+                emit({MOpcode::MovRI,
+                      {MOperand::defVReg(sizeV),
+                       MOperand::immediate(static_cast<std::int64_t>(envSz))}});
+                VReg heap = emitMalloc(sizeV);
+                if (failed_) return kInvalidVReg;
+
+                // Store fn_ptr in the __fn field (always field 0, offset 0)
+                for (const auto& fi : sema_.functions) {
+                    if (fi.name != lam.name && fi.mangledName != lam.name) continue;
+                    const std::string sym = fi.mangledName.empty() ? fi.name : fi.mangledName;
+                    VReg fnAddr = fn_->newVReg();
+                    emit({MOpcode::Lea, {MOperand::defVReg(fnAddr), MOperand::sym(sym)}});
+                    MInst st{MOpcode::StoreInd,
+                             {MOperand::useVReg(heap), MOperand::immediate(0),
+                              MOperand::useVReg(fnAddr)}};
+                    st.width = 8; st.isSigned = false; emit(st);
+                    break;
+                }
+
+                // Store each captured variable at fieldOffs[ci + 1] (skip __fn)
+                for (unsigned ci = 0; ci < lam.captures.size(); ++ci) {
+                    unsigned fidx = ci + 1;  // +1 skips the __fn field
+                    if (fidx >= fieldOffs.size()) break;
+                    const std::string& capName = lam.captures[ci];
+                    LocalInfo li;
+                    if (!lookupLocal(capName, li)) {
+                        fail("selector: closure capture '" + capName +
+                             "' not a local in enclosing function");
+                        return kInvalidVReg;
+                    }
+                    Types::TypeRef capTy = si->fields[fidx].second;
+                    VReg capVal;
+                    if (isFloatType(capTy)) {
+                        capVal = fn_->newVReg(RegClass::XMM);
+                        std::uint8_t fw = floatWidthOf(capTy);
+                        emitFW(MOpcode::FLoad,
+                               {MOperand::defVReg(capVal), MOperand::slot(li.slot)}, fw);
+                    } else if (li.kind == LocalKind::AggregateValue ||
+                               li.kind == LocalKind::AggregatePtr) {
+                        // Aggregate: copy bytes from local slot to heap
+                        VReg srcAddr = fn_->newVReg();
+                        emit({MOpcode::LeaSlot,
+                              {MOperand::defVReg(srcAddr), MOperand::slot(li.slot)}});
+                        unsigned sz = sizeOf(capTy);
+                        emitStructCopy(ElemAddr{heap, static_cast<std::int64_t>(fieldOffs[fidx])},
+                                       ElemAddr{srcAddr, 0}, sz);
+                        continue;
+                    } else {
+                        capVal = fn_->newVReg();
+                        MInst ld{MOpcode::Load,
+                                 {MOperand::defVReg(capVal), MOperand::slot(li.slot)}};
+                        ld.width = static_cast<std::uint8_t>(widthOf(capTy));
+                        ld.isSigned = isSignedOf(capTy);
+                        emit(ld);
+                    }
+                    if (isFloatType(capTy)) {
+                        std::uint8_t fw = floatWidthOf(capTy);
+                        emitFW(MOpcode::FStoreInd,
+                               {MOperand::useVReg(heap),
+                                MOperand::immediate(static_cast<std::int64_t>(fieldOffs[fidx])),
+                                MOperand::useVReg(capVal)}, fw);
+                    } else {
+                        MInst st2{MOpcode::StoreInd,
+                                  {MOperand::useVReg(heap),
+                                   MOperand::immediate(static_cast<std::int64_t>(fieldOffs[fidx])),
+                                   MOperand::useVReg(capVal)}};
+                        st2.width = static_cast<std::uint8_t>(widthOf(capTy));
+                        st2.isSigned = false;
+                        emit(st2);
+                    }
+                }
+                return heap;
+            }
+            // Non-capturing lambda: plain function pointer (unchanged).
             for (const auto& fi : sema_.functions) {
                 if (fi.name != lam.name && fi.mangledName != lam.name) continue;
                 const std::string sym = fi.mangledName.empty() ? fi.name : fi.mangledName;
@@ -6742,7 +6859,7 @@ bool InstructionSelector::selMethodCall(const AST::FunctionCallExpr& call, VReg&
     // Build the argument list: this, then the explicit arguments. An aggregate
     // return uses sret: arg0 stays `this`? No — sret pointer precedes `this`.
     Types::TypeRef callTy = concreteTypeOf(&call);
-    const bool sretCall = isAggregateType(callTy);
+    const bool sretCall = isAggregateType(callTy) || (callTy && callTy->kind == Types::Kind::Any);
     std::vector<VReg> argVRegs;
     std::vector<bool> argIsFloat;
     std::vector<std::uint8_t> argFloatW;
@@ -7129,13 +7246,21 @@ VReg InstructionSelector::selCall(const AST::FunctionCallExpr& call) {
     // `f(args)` loads the pointer value from `f` and calls through it. Unlike
     // fnCall, every argument is a real call argument (no target arg to skip).
     bool isFnVarCall = false;
+    VReg closureEnv = kInvalidVReg;  // env ptr for closure calls
     if (!isFnCallIntrinsic && call.callee &&
         call.callee->nodeType() == AST::NodeType::IdentifierExpr) {
         LocalInfo li;
         const std::string& cn =
             static_cast<const AST::IdentifierExpr&>(*call.callee).name;
-        if (lookupLocal(cn, li) && li.type && li.type->kind == Types::Kind::Function) {
-            isFnVarCall = true;
+        if (lookupLocal(cn, li) && li.type) {
+            if (li.type->kind == Types::Kind::Function ||
+                li.type->kind == Types::Kind::Closure) {
+                isFnVarCall = true;
+                if (li.type->kind == Types::Kind::Closure) {
+                    closureEnv = selExpr(call.callee);
+                    if (failed_) return kInvalidVReg;
+                }
+            }
         }
     }
 
@@ -7151,10 +7276,19 @@ VReg InstructionSelector::selCall(const AST::FunctionCallExpr& call) {
             }
             targetV = selExpr(call.arguments[0]);
         } else {
-            // Load the function-pointer value out of the callee variable.
             targetV = selExpr(call.callee);
         }
         if (failed_) return kInvalidVReg;
+        if (closureEnv != kInvalidVReg) {
+            // Closure: load fn_ptr from [closure_ptr + 0]
+            VReg fnPtr = fn_->newVReg();
+            MInst ld{MOpcode::LoadInd,
+                     {MOperand::defVReg(fnPtr), MOperand::useVReg(closureEnv),
+                      MOperand::immediate(0)}};
+            ld.width = 8; ld.isSigned = false;
+            emit(ld);
+            targetV = fnPtr;
+        }
         indirectTargetSlot = fn_->addFrameSlot(8, 8, /*isSpill=*/false);
         MInst st{MOpcode::Store,
                  {MOperand::slot(indirectTargetSlot), MOperand::useVReg(targetV)}};
@@ -7193,7 +7327,7 @@ VReg InstructionSelector::selCall(const AST::FunctionCallExpr& call) {
     // address as a hidden first argument. The call's value is that address (so
     // the result can be used as a struct lvalue: f().field, passing f() onward).
     Types::TypeRef callTy = concreteTypeOf(&call);
-    const bool sretCall = isAggregateType(callTy);
+    const bool sretCall = isAggregateType(callTy) || (callTy && callTy->kind == Types::Kind::Any);
     VReg sretTempAddr = kInvalidVReg;
     AggregateAbi retCls;
     bool retInRegs = false;  // struct returned in registers (writeback after call)
@@ -7248,6 +7382,12 @@ VReg InstructionSelector::selCall(const AST::FunctionCallExpr& call) {
             // the call (no hidden pointer argument).
             retInRegs = true;
         }
+    }
+    if (closureEnv != kInvalidVReg) {
+        argVRegs.push_back(closureEnv);
+        argIsFloat.push_back(false);
+        argFloatW.push_back(8);
+        argIsAggMem.push_back(false);
     }
     for (std::size_t ai = 0; ai < call.arguments.size(); ++ai) {
         // For fnCall, arguments[0] is the target address (already materialized),
@@ -7596,6 +7736,9 @@ void InstructionSelector::selAsmBlock(const AST::InlineAsmExpr& node) {
 }
 
 }  // namespace Backend
+
+
+
 
 
 

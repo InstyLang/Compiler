@@ -264,12 +264,9 @@ private:
     void selInfiniteLoop(const AST::InfiniteLoop& s);
     // `when (cond) { ... }`: a single-armed conditional (an `if` with no else).
     void selWhen(const AST::WhenStatement& s);
-    // `switch (subject) { arm patterns => body, ..., default => body }`:
-    // chained equality tests; arm bodies do NOT fall through to the next arm.
-    void selSwitch(const AST::SwitchStatement& s);
-    // `match subject { Variant(binds) => body, ... }`: tag dispatch + payload
+    // `switch subject { Variant(binds) => body, ... }`: tag dispatch + payload
     // binding for tagged-union (sum-type) values.
-    void selMatch(const AST::MatchStatement& s);
+    void selSwitch(const AST::SwitchStatement& s);
     // `break` / `skip`: branch to the innermost loop's exit / continue block.
     void selBreak();
     void selSkip();
@@ -690,5 +687,6 @@ private:
 };
 
 }  // namespace Backend
+
 
 

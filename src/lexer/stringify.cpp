@@ -34,7 +34,6 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::KwLoop:          return "KwLoop";
         case TokenType::KwWhen:          return "KwWhen";
         case TokenType::KwSwitch:        return "KwSwitch";
-        case TokenType::KwMatch:         return "KwMatch";
         case TokenType::KwReturn:        return "KwReturn";
         case TokenType::KwBreak:         return "KwBreak";
         case TokenType::KwSkip:          return "KwSkip";
@@ -149,8 +148,7 @@ TokenType keywordTokenType(const std::string& word) {
         {"loop",        TokenType::KwLoop},
         {"when",        TokenType::KwWhen},
         {"switch",      TokenType::KwSwitch},
-        {"match",       TokenType::KwMatch},
-        {"return",      TokenType::KwReturn},
+            {"return",      TokenType::KwReturn},
         {"break",       TokenType::KwBreak},
         {"skip",        TokenType::KwSkip},
         {"new",         TokenType::KwNew},
@@ -177,7 +175,9 @@ bool isPrimitiveTypeName(const std::string& word) {
         "i8", "i16", "i32", "i64", "i128",
         "u8", "u16", "u32", "u64", "u128",
         "f16", "f32", "f64", "f128",
+        "any", "object",
     };
     return kPrimitives.find(word) != kPrimitives.end();
 }
+
 

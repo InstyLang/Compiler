@@ -23,10 +23,11 @@ export fun mk_add(Expr* l, Expr* r) -> Expr* {
 export fun eval(Expr* e) -> i64 {
     Expr node
     unsafe { node = ~e }
-    match node {
+    switch node {
         Lit(v) => return v
         Add(l, r) => return eval(l) + eval(r)
         Neg(x) => return 0 - eval(x)
     }
     return 0
 }
+

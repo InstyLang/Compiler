@@ -73,7 +73,7 @@ struct SumVariant {
 
 // A tagged-union enum. Its runtime representation is an aggregate `{ i64 tag;
 // <payload storage> }`, so the type itself is registered as a Struct; this record
-// carries the variant metadata used to type-check construction / `match`.
+// carries the variant metadata used to type-check construction / `switch`.
 struct SumTypeInfo {
     std::string name;
     std::vector<SumVariant> variants;
@@ -175,4 +175,5 @@ std::string mangleGenericInstance(const std::string& templateName,
                                   const std::vector<std::string>& typeArgs);
 
 }
+
 

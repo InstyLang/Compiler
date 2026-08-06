@@ -89,13 +89,16 @@ fun main() -> i32 {
     if cast<i64>(bytes[1]) != 200 { e = e + 1 }
     if cast<i64>(bytes[2]) != 255 { e = e + 1 }
 
-    // switch dispatch still selects the right arm
+    // comparing a C-style enum value still selects the right branch
     i64 hit = 0
-    switch u {
-        Lo -> hit = 1
-        Mid -> hit = 2
-        Hi -> hit = 3
-        _ -> hit = 9
+    if u == Lo {
+        hit = 1
+    } else if u == Mid {
+        hit = 2
+    } else if u == Hi {
+        hit = 3
+    } else {
+        hit = 9
     }
     if hit != 3 { e = e + 1 }
 

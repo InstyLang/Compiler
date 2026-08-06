@@ -20,7 +20,6 @@ enum class NodeType {
     ForLoop,
     WhenStatement,
     SwitchStatement,
-    MatchStatement,
     ReturnStatement,
     BreakStatement,
     SkipStatement,
@@ -179,8 +178,12 @@ struct WhenStatement : ExprAST {
     NodeType nodeType() const override { return NodeType::WhenStatement; }
 };
 
+// `switch subject { Variant(bindings) => body, ..., _ => body }`. Destructures a
+// tagged-union value: each non-default arm names a variant and binds its payload
+// fields to fresh locals scoped to the arm body.
 struct SwitchArm {
-    NodeList patterns;
+    std::string variant;               // variant name (empty for the `_` arm)
+    std::vector<std::string> bindings; // payload binding names (may be empty)
     NodeList body;
     bool isDefault = false;
 };
@@ -189,22 +192,6 @@ struct SwitchStatement : ExprAST {
     NodePtr subject;
     std::vector<SwitchArm> arms;
     NodeType nodeType() const override { return NodeType::SwitchStatement; }
-};
-
-// `match subject { Variant(bindings) => body, ..., _ => body }`. Destructures a
-// tagged-union value: each non-default arm names a variant and binds its payload
-// fields to fresh locals scoped to the arm body.
-struct MatchArm {
-    std::string variant;               // variant name (empty for the `_` arm)
-    std::vector<std::string> bindings; // payload binding names (may be empty)
-    NodeList body;
-    bool isDefault = false;
-};
-
-struct MatchStatement : ExprAST {
-    NodePtr subject;
-    std::vector<MatchArm> arms;
-    NodeType nodeType() const override { return NodeType::MatchStatement; }
 };
 
 struct ReturnStatement : ExprAST {
@@ -407,12 +394,14 @@ struct InlineAsmExpr : ExprAST {
 
 // An anonymous function: `|params| => expr` or `|params| => { ... }`. The
 // parser lifts the body into a synthesized top-level function (`function`,
-// named `name`) so the lambda value is just that function's address (a
-// non-capturing function pointer). Its type is a Function type (params ->
-// inferred return).
+// named `name`). Non-capturing lambdas yield a plain function pointer (the
+// lifted function's address). Capturing lambdas yield a closure pointer to a
+// heap-allocated { fn_ptr, cap1, cap2, ... } struct.
 struct LambdaExpr : ExprAST {
     std::string name;                               // synthesized symbol name
     std::shared_ptr<FunctionDeclaration> function;  // lifted function (owns body)
+    std::vector<std::string> captures;              // enclosing variables captured
+    std::string envStructName;                      // name of the env struct (if capturing)
     NodeType nodeType() const override { return NodeType::Lambda; }
 };
 
@@ -506,7 +495,6 @@ INSTY_NODE_TYPE_OF(InfiniteLoop, InfiniteLoop)
 INSTY_NODE_TYPE_OF(ForLoop, ForLoop)
 INSTY_NODE_TYPE_OF(WhenStatement, WhenStatement)
 INSTY_NODE_TYPE_OF(SwitchStatement, SwitchStatement)
-INSTY_NODE_TYPE_OF(MatchStatement, MatchStatement)
 INSTY_NODE_TYPE_OF(ReturnStatement, ReturnStatement)
 INSTY_NODE_TYPE_OF(BreakStatement, BreakStatement)
 INSTY_NODE_TYPE_OF(SkipStatement, SkipStatement)
@@ -553,3 +541,4 @@ std::shared_ptr<T> ast_cast(const std::shared_ptr<ExprAST>& node) {
 }
 
 }
+

@@ -244,14 +244,6 @@ private:
                 }
                 break;
             }
-            case AST::NodeType::MatchStatement: {
-                auto* s = static_cast<AST::MatchStatement*>(node);
-                for (auto& arm : s->arms) {
-                    resolveList(arm.body);
-                    if (!ok()) return;
-                }
-                break;
-            }
             case AST::NodeType::ClassDeclaration: {
                 auto* s = static_cast<AST::ClassDeclaration*>(node);
                 for (auto& method : s->methods) {

@@ -140,21 +140,21 @@ void testParser() {
     CHECK(parseClean("fun add(i64 a, i64 b) -> i64 {\n  return a + b\n}\n"));
     CHECK(parseClean("fun f() -> void {\n  i32 x = 1 + 2 * 3\n}\n"));
 
-    CHECK(parseClean("fun f() -> void {\n"
-                     "  i64 n = 2\n"
-                     "  switch n {\n"
-                     "    0 -> return\n"
-                     "    1, 2, 3 -> { return }\n"
-                     "    _ -> return\n"
+    CHECK(parseClean("enum E {\n  A(i64),\n  B(i64, i64),\n  C\n}\n"
+                     "fun f(E e) -> void {\n"
+                     "  switch e {\n"
+                     "    A(v) => return\n"
+                     "    B(x, y) => { return }\n"
+                     "    _ => return\n"
                      "  }\n"
                      "}\n"));
 
     {
-        auto sw = parse("fun f() -> void {\n"
-                        "  i64 n = 0\n"
-                        "  switch n {\n"
-                        "    1, 2 -> return\n"
-                        "    _ -> return\n"
+        auto sw = parse("enum E {\n  A(i64, i64),\n  B\n}\n"
+                        "fun f(E e) -> void {\n"
+                        "  switch e {\n"
+                        "    A(x, y) => return\n"
+                        "    _ => return\n"
                         "  }\n"
                         "}\n");
         std::shared_ptr<AST::SwitchStatement> snode;
@@ -171,10 +171,11 @@ void testParser() {
             }
         }
         CHECK(snode && snode->arms.size() == 2);
-        CHECK(snode && snode->arms[0].patterns.size() == 2 &&
+        CHECK(snode && snode->arms[0].variant == "A" &&
+              snode->arms[0].bindings.size() == 2 &&
               !snode->arms[0].isDefault);
         CHECK(snode && snode->arms[1].isDefault &&
-              snode->arms[1].patterns.empty());
+              snode->arms[1].variant.empty());
         ErrorReporting::cleanupErrorReporter();
     }
     CHECK(parseClean("fun f() -> void {\n  if 1 < 2 {\n    return\n  } else {\n    return\n  }\n}\n"));
@@ -334,7 +335,7 @@ void testSema() {
         "}\n"
         "fun main() -> i32 { return idptr<i32>(7) }\n"));
 
-    // Tagged-union enums + match: construction, payload binding, exhaustiveness.
+    // Tagged-union enums + switch: construction, payload binding, exhaustiveness.
     const char* exprAst =
         "enum Expr {\n"
         "  Lit(i64),\n"
@@ -343,7 +344,7 @@ void testSema() {
         "}\n";
     CHECK(semaClean(std::string(exprAst) +
         "fun f(Expr e) -> i64 {\n"
-        "  match e {\n"
+        "  switch e {\n"
         "    Lit(v) => return v\n"
         "    Add(l, r) => return 1\n"
         "    Nil => return 0\n"
@@ -355,36 +356,36 @@ void testSema() {
         "  Expr n = Expr.Nil\n"
         "  return cast<i32>(f(a))\n"
         "}\n"));
-    // Non-exhaustive match is rejected (missing Nil).
+    // Non-exhaustive switch is rejected (missing Nil).
     CHECK(!semaClean(std::string(exprAst) +
         "fun f(Expr e) -> i64 {\n"
-        "  match e { Lit(v) => return v, Add(l, r) => return 1 }\n"
+        "  switch e { Lit(v) => return v, Add(l, r) => return 1 }\n"
         "  return 0\n"
         "}\n"));
     // A `_` arm makes it exhaustive.
     CHECK(semaClean(std::string(exprAst) +
         "fun f(Expr e) -> i64 {\n"
-        "  match e { Lit(v) => return v, _ => return 0 }\n"
+        "  switch e { Lit(v) => return v, _ => return 0 }\n"
         "  return 0\n"
         "}\n"));
-    // Unknown variant in a match arm is rejected.
+    // Unknown variant in a switch arm is rejected.
     CHECK(!semaClean(std::string(exprAst) +
         "fun f(Expr e) -> i64 {\n"
-        "  match e { Lit(v) => return v, Bogus => return 0, _ => return 1 }\n"
+        "  switch e { Lit(v) => return v, Bogus => return 0, _ => return 1 }\n"
         "  return 0\n"
         "}\n"));
     // Wrong binding arity is rejected (Add carries two fields).
     CHECK(!semaClean(std::string(exprAst) +
         "fun f(Expr e) -> i64 {\n"
-        "  match e { Lit(v) => return v, Add(x) => return 1, Nil => return 0 }\n"
+        "  switch e { Lit(v) => return v, Add(x) => return 1, Nil => return 0 }\n"
         "  return 0\n"
         "}\n"));
     // Constructing a payload variant with the wrong argument count is rejected.
     CHECK(!semaClean(std::string(exprAst) +
         "fun main() -> i32 { Expr a = Expr.Lit(1, 2)\n  return 0 }\n"));
-    // match on a non-sum type is rejected.
+    // switch on a non-sum type is rejected.
     CHECK(!semaClean(
-        "fun f(i32 x) -> i32 { match x { _ => return 0 }\n  return 0 }\n"));
+        "fun f(i32 x) -> i32 { switch x { _ => return 0 }\n  return 0 }\n"));
     // A by-value sum-type payload (unsupported in the MVP) is rejected.
     CHECK(!semaClean(
         "struct P { i32 x }\n"
@@ -407,3 +408,4 @@ int main() {
     std::cout << "all unit tests passed\n";
     return 0;
 }
+

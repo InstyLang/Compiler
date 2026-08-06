@@ -22,7 +22,10 @@ enum class Kind {
     Class,
     Function,
     Generic,
-    Error
+    Error,
+    Any,
+    Object,
+    Closure
 };
 
 struct Type;
@@ -69,6 +72,10 @@ public:
     TypeRef boolType() const { return &bool_; }
     TypeRef textType() const { return &text_; }
     TypeRef errorType() const { return &error_; }
+    TypeRef anyType() const { return &any_; }
+    TypeRef objectType() const { return &object_; }
+
+    TypeRef closureType(TypeRef functionType);
 
     TypeRef intType(int bitWidth, bool isSigned);
     TypeRef floatType(int bitWidth);
@@ -99,6 +106,8 @@ private:
     Type bool_;
     Type text_;
     Type error_;
+    Type any_;
+    Type object_;
 
     uint64_t id_;
 

@@ -313,8 +313,15 @@ bool boundaryType(Types::TypeRef type, ValType& out, bool& isVoid, bool& isSigne
             return true;
         case Types::Kind::Pointer:
         case Types::Kind::Text:
-            // Addresses are 32-bit on wasm32 even though the selector models
-            // them as 64-bit internally.
+        case Types::Kind::Object:
+            out = ValType::I32;
+            isSigned = false;
+            return true;
+        case Types::Kind::Closure:
+            out = ValType::I32;
+            isSigned = false;
+            return true;
+        case Types::Kind::Any:
             out = ValType::I32;
             isSigned = false;
             return true;

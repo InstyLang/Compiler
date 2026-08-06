@@ -575,9 +575,6 @@ void Checker::checkStatement(const AST::NodePtr& node) {
         case AST::NodeType::SwitchStatement:
             checkSwitch(static_cast<AST::SwitchStatement*>(node.get()));
             break;
-        case AST::NodeType::MatchStatement:
-            checkMatch(static_cast<AST::MatchStatement*>(node.get()));
-            break;
         case AST::NodeType::ReturnStatement:
             checkReturn(static_cast<AST::ReturnStatement*>(node.get()));
             break;
@@ -760,87 +757,6 @@ void Checker::checkWhen(AST::WhenStatement* node) {
     popScope();
 }
 
-void Checker::checkSwitch(AST::SwitchStatement* node) {
-    if (!node) return;
-    Types::TypeRef subjT = node->subject ? checkExpr(node->subject) : nullptr;
-
-    // Track coverage for exhaustiveness: `switch` is exhaustive like Rust's
-    // `match`. A `_` arm covers everything; otherwise an enum subject must name
-    // every variant and a bool subject must cover true and false. Any other
-    // subject type cannot be matched exhaustively and requires a `_` arm.
-    bool hasDefault = false;
-    std::set<std::string> coveredNames;  // enum-variant / identifier patterns
-    bool coveredTrue = false;
-    bool coveredFalse = false;
-
-    for (auto& arm : node->arms) {
-        if (arm.isDefault) hasDefault = true;
-        for (auto& pat : arm.patterns) {
-            Types::TypeRef pt = checkExpr(pat);
-            if (subjT && pt && !subjT->isError() && !pt->isError() &&
-                !isAssignable(subjT, pt, isIntLiteral(pat)) &&
-                !isAssignable(pt, subjT, false)) {
-                emit("E2013", "switch arm pattern type " + types_.toString(pt) +
-                                  " is not comparable to subject type " +
-                                  types_.toString(subjT),
-                     pat.get(), "patterns are matched against the subject with '=='");
-            }
-            // Record what this constant pattern covers.
-            AST::ExprAST* p = pat.get();
-            if (p->nodeType() == AST::NodeType::IdentifierExpr) {
-                coveredNames.insert(static_cast<AST::IdentifierExpr*>(p)->name);
-            } else if (p->nodeType() == AST::NodeType::MemberAccess) {
-                auto* m = static_cast<AST::MemberAccessExpr*>(p);
-                if (m->property &&
-                    m->property->nodeType() == AST::NodeType::IdentifierExpr) {
-                    coveredNames.insert(
-                        static_cast<AST::IdentifierExpr*>(m->property.get())->name);
-                }
-            } else if (p->nodeType() == AST::NodeType::BoolLiteral) {
-                if (static_cast<AST::BoolLiteral*>(p)->value) coveredTrue = true;
-                else coveredFalse = true;
-            }
-        }
-        pushScope();
-        checkBlock(arm.body);
-        popScope();
-    }
-
-    // A default arm makes any switch exhaustive.
-    if (hasDefault || !subjT || subjT->isError()) return;
-
-    if (subjT->kind == Types::Kind::Enum) {
-        const EnumInfo* ei = nullptr;
-        for (const auto& e : result_.enums) {
-            if (e.name == subjT->name) { ei = &e; break; }
-        }
-        if (ei) {
-            std::string missing;
-            for (const auto& v : ei->variants) {
-                if (!coveredNames.count(v.first)) {
-                    if (!missing.empty()) missing += ", ";
-                    missing += v.first;
-                }
-            }
-            if (!missing.empty()) {
-                emit("E2014", "non-exhaustive switch on enum '" + subjT->name +
-                                  "': missing " + missing,
-                     node, "cover every variant, or add a `_ -> ...` default arm");
-            }
-        }
-    } else if (subjT->kind == Types::Kind::Bool) {
-        if (!(coveredTrue && coveredFalse)) {
-            emit("E2014",
-                 "non-exhaustive switch on bool: must cover both true and false",
-                 node, "add the missing case, or a `_ -> ...` default arm");
-        }
-    } else {
-        emit("E2014", "non-exhaustive switch on " + types_.toString(subjT) +
-                          ": this type cannot be matched exhaustively",
-             node, "add a `_ -> ...` default arm");
-    }
-}
-
 const SumTypeInfo* Checker::sumTypeByName(const std::string& name) const {
     for (const auto& st : result_.sumTypes) {
         if (st.name == name) return &st;
@@ -851,14 +767,23 @@ const SumTypeInfo* Checker::sumTypeByName(const std::string& name) const {
 const SumTypeInfo* Checker::asSumVariantAccess(const AST::MemberAccessExpr* m,
                                                const SumVariant** outVariant) const {
     if (outVariant) *outVariant = nullptr;
-    if (!m || m->computed || m->isScope) {
-        // `E::V` scope access is also acceptable; handle both dot and scope.
-    }
     if (!m || m->computed) return nullptr;
-    if (!m->object || m->object->nodeType() != AST::NodeType::IdentifierExpr)
-        return nullptr;
-    const std::string& typeName =
-        static_cast<const AST::IdentifierExpr&>(*m->object).name;
+    // Resolve a possibly-scoped type name (e.g. `module::Type` or `Type`).
+    std::string typeName;
+    {
+        const AST::ExprAST* obj = m->object.get();
+        if (!obj) return nullptr;
+        if (obj->nodeType() == AST::NodeType::IdentifierExpr) {
+            typeName = static_cast<const AST::IdentifierExpr*>(obj)->name;
+        } else if (obj->nodeType() == AST::NodeType::MemberAccess) {
+            auto* inner = static_cast<const AST::MemberAccessExpr*>(obj);
+            if (inner->isScope && inner->property &&
+                inner->property->nodeType() == AST::NodeType::IdentifierExpr) {
+                typeName = static_cast<const AST::IdentifierExpr*>(inner->property.get())->name;
+            }
+        }
+        if (typeName.empty()) return nullptr;
+    }
     const SumTypeInfo* st = sumTypeByName(typeName);
     if (!st) return nullptr;
     if (!m->property || m->property->nodeType() != AST::NodeType::IdentifierExpr)
@@ -873,15 +798,15 @@ const SumTypeInfo* Checker::asSumVariantAccess(const AST::MemberAccessExpr* m,
     return st;
 }
 
-void Checker::checkMatch(AST::MatchStatement* node) {
+void Checker::checkSwitch(AST::SwitchStatement* node) {
     if (!node) return;
     Types::TypeRef subjT = node->subject ? checkExpr(node->subject) : nullptr;
     const SumTypeInfo* st =
         (subjT && !subjT->isError()) ? sumTypeByName(subjT->name) : nullptr;
     if (subjT && !subjT->isError() && !st) {
-        emit("E2018", "match requires a tagged-union value, got " +
+        emit("E2018", "switch requires a tagged-union value, got " +
                           types_.toString(subjT),
-             node->subject.get(), "match works on sum-type enums");
+             node->subject.get(), "switch works on sum-type enums");
     }
 
     bool hasDefault = false;
@@ -906,7 +831,7 @@ void Checker::checkMatch(AST::MatchStatement* node) {
                                       std::to_string(v->payload.size()) +
                                       " field(s), got " +
                                       std::to_string(arm.bindings.size()),
-                         node, "match `Variant(a, b)` must bind each payload field");
+                         node, "switch `Variant(a, b)` must bind each payload field");
                 } else {
                     for (size_t i = 0; i < arm.bindings.size(); ++i) {
                         declareLocal(arm.bindings[i], v->payload[i], node);
@@ -1552,6 +1477,7 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
     // type. Arguments were already checked at the top of checkCall.
     if (calleeNode && calleeNode->nodeType() == AST::NodeType::IdentifierExpr) {
         Types::TypeRef vt = lookupLocal(name);
+        if (vt && vt->kind == Types::Kind::Closure) vt = vt->element;
         if (vt && vt->kind == Types::Kind::Function) {
             if (node->arguments.size() != vt->params.size()) {
                 emit("E2008", "wrong number of arguments to '" + name +
@@ -1774,6 +1700,289 @@ Types::TypeRef Checker::checkCast(AST::CastExpr* node) {
     return record(node, to);
 }
 
+namespace {
+
+void collectCapturesInNode(AST::NodePtr& node,
+                            const std::set<std::string>& paramNames,
+                            std::set<std::string>& captures);
+
+void collectCapturesInList(AST::NodeList& body,
+                            const std::set<std::string>& paramNames,
+                            std::set<std::string>& captures) {
+    for (auto& stmt : body) collectCapturesInNode(stmt, paramNames, captures);
+}
+
+void collectCapturesInNode(AST::NodePtr& node,
+                            const std::set<std::string>& paramNames,
+                            std::set<std::string>& captures) {
+    if (!node) return;
+    switch (node->nodeType()) {
+        case AST::NodeType::IdentifierExpr: {
+            auto& id = static_cast<AST::IdentifierExpr&>(*node);
+            if (paramNames.count(id.name)) return;
+            captures.insert(id.name);
+            return;
+        }
+        case AST::NodeType::FunctionCall: {
+            auto& c = static_cast<AST::FunctionCallExpr&>(*node);
+            collectCapturesInNode(c.callee, paramNames, captures);
+            collectCapturesInList(c.arguments, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::BuiltinCall: {
+            auto& b = static_cast<AST::BuiltinCallExpr&>(*node);
+            collectCapturesInList(b.arguments, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::BinaryOperation: {
+            auto& b = static_cast<AST::BinaryOperationExpr&>(*node);
+            collectCapturesInNode(b.lhs, paramNames, captures);
+            collectCapturesInNode(b.rhs, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::EqualityCheck: {
+            auto& e = static_cast<AST::EqualityCheckExpr&>(*node);
+            collectCapturesInNode(e.left, paramNames, captures);
+            collectCapturesInNode(e.right, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::LogicalOperation: {
+            auto& l = static_cast<AST::LogicalOperationExpr&>(*node);
+            collectCapturesInNode(l.left, paramNames, captures);
+            collectCapturesInNode(l.right, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::UnaryExpr: {
+            auto& u = static_cast<AST::UnaryExpr&>(*node);
+            collectCapturesInNode(u.operand, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::CastExpr: {
+            auto& c = static_cast<AST::CastExpr&>(*node);
+            collectCapturesInNode(c.expression, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::MemberAccess: {
+            auto& m = static_cast<AST::MemberAccessExpr&>(*node);
+            collectCapturesInNode(m.object, paramNames, captures);
+            if (!m.computed) collectCapturesInNode(m.property, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::DereferenceExpr: {
+            auto& d = static_cast<AST::DereferenceExpr&>(*node);
+            collectCapturesInNode(d.operand, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::AddressOfExpr: {
+            auto& a = static_cast<AST::AddressOfExpr&>(*node);
+            collectCapturesInNode(a.operand, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::ReturnStatement: {
+            auto& r = static_cast<AST::ReturnStatement&>(*node);
+            if (r.returnValue) collectCapturesInNode(r.returnValue, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::AssignmentExpr: {
+            auto& a = static_cast<AST::AssignmentExpr&>(*node);
+            collectCapturesInNode(a.target, paramNames, captures);
+            collectCapturesInNode(a.value, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::IfStatement: {
+            auto& i = static_cast<AST::IfStatement&>(*node);
+            collectCapturesInNode(i.condition, paramNames, captures);
+            collectCapturesInList(i.consequent, paramNames, captures);
+            if (!i.alternate.empty())
+                collectCapturesInList(i.alternate, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::WhileLoop: {
+            auto& w = static_cast<AST::WhileLoop&>(*node);
+            collectCapturesInNode(w.condition, paramNames, captures);
+            collectCapturesInList(w.body, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::ForLoop: {
+            auto& f = static_cast<AST::ForLoop&>(*node);
+            if (f.isRange) {
+                collectCapturesInNode(f.rangeStart, paramNames, captures);
+                collectCapturesInNode(f.rangeEnd, paramNames, captures);
+            } else {
+                collectCapturesInNode(f.iterable, paramNames, captures);
+            }
+            collectCapturesInList(f.body, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::SwitchStatement: {
+            auto& s = static_cast<AST::SwitchStatement&>(*node);
+            collectCapturesInNode(s.subject, paramNames, captures);
+            for (auto& arm : s.arms)
+                collectCapturesInList(arm.body, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::VariableDeclaration: {
+            auto& d = static_cast<AST::VariableDeclarationExpr&>(*node);
+            if (d.initialValue)
+                collectCapturesInNode(d.initialValue, paramNames, captures);
+            return;
+        }
+        case AST::NodeType::UnsafeBlock: {
+            auto& u = static_cast<AST::UnsafeBlock&>(*node);
+            collectCapturesInList(u.body, paramNames, captures);
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+void transformCaptureList(AST::NodeList& body,
+                           const std::set<std::string>& captureSet,
+                           const std::string& envName);
+
+AST::NodePtr transformCaptureRef(AST::NodePtr node,
+                                  const std::set<std::string>& captureSet,
+                                  const std::string& envName) {
+    if (!node) return nullptr;
+    switch (node->nodeType()) {
+        case AST::NodeType::IdentifierExpr: {
+            auto& id = static_cast<AST::IdentifierExpr&>(*node);
+            if (captureSet.count(id.name)) {
+                auto obj = std::make_shared<AST::IdentifierExpr>();
+                obj->name = envName;
+                auto prop = std::make_shared<AST::IdentifierExpr>();
+                prop->name = id.name;
+                auto acc = std::make_shared<AST::MemberAccessExpr>();
+                acc->object = obj;
+                acc->property = prop;
+                acc->computed = false;
+                return acc;
+            }
+            return node;
+        }
+        case AST::NodeType::FunctionCall: {
+            auto& c = static_cast<AST::FunctionCallExpr&>(*node);
+            c.callee = transformCaptureRef(c.callee, captureSet, envName);
+            for (auto& a : c.arguments) a = transformCaptureRef(a, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::BuiltinCall: {
+            auto& b = static_cast<AST::BuiltinCallExpr&>(*node);
+            for (auto& a : b.arguments) a = transformCaptureRef(a, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::BinaryOperation: {
+            auto& b = static_cast<AST::BinaryOperationExpr&>(*node);
+            b.lhs = transformCaptureRef(b.lhs, captureSet, envName);
+            b.rhs = transformCaptureRef(b.rhs, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::EqualityCheck: {
+            auto& e = static_cast<AST::EqualityCheckExpr&>(*node);
+            e.left = transformCaptureRef(e.left, captureSet, envName);
+            e.right = transformCaptureRef(e.right, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::LogicalOperation: {
+            auto& l = static_cast<AST::LogicalOperationExpr&>(*node);
+            l.left = transformCaptureRef(l.left, captureSet, envName);
+            l.right = transformCaptureRef(l.right, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::UnaryExpr: {
+            auto& u = static_cast<AST::UnaryExpr&>(*node);
+            u.operand = transformCaptureRef(u.operand, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::CastExpr: {
+            auto& c = static_cast<AST::CastExpr&>(*node);
+            c.expression = transformCaptureRef(c.expression, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::MemberAccess: {
+            auto& m = static_cast<AST::MemberAccessExpr&>(*node);
+            m.object = transformCaptureRef(m.object, captureSet, envName);
+            if (!m.computed) m.property = transformCaptureRef(m.property, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::DereferenceExpr: {
+            auto& d = static_cast<AST::DereferenceExpr&>(*node);
+            d.operand = transformCaptureRef(d.operand, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::AddressOfExpr: {
+            auto& a = static_cast<AST::AddressOfExpr&>(*node);
+            a.operand = transformCaptureRef(a.operand, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::ReturnStatement: {
+            auto& r = static_cast<AST::ReturnStatement&>(*node);
+            if (r.returnValue) r.returnValue = transformCaptureRef(r.returnValue, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::AssignmentExpr: {
+            auto& a = static_cast<AST::AssignmentExpr&>(*node);
+            a.target = transformCaptureRef(a.target, captureSet, envName);
+            a.value = transformCaptureRef(a.value, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::IfStatement: {
+            auto& i = static_cast<AST::IfStatement&>(*node);
+            i.condition = transformCaptureRef(i.condition, captureSet, envName);
+            transformCaptureList(i.consequent, captureSet, envName);
+            if (!i.alternate.empty())
+                transformCaptureList(i.alternate, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::WhileLoop: {
+            auto& w = static_cast<AST::WhileLoop&>(*node);
+            w.condition = transformCaptureRef(w.condition, captureSet, envName);
+            transformCaptureList(w.body, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::ForLoop: {
+            auto& f = static_cast<AST::ForLoop&>(*node);
+            if (f.isRange) {
+                f.rangeStart = transformCaptureRef(f.rangeStart, captureSet, envName);
+                f.rangeEnd = transformCaptureRef(f.rangeEnd, captureSet, envName);
+            } else {
+                f.iterable = transformCaptureRef(f.iterable, captureSet, envName);
+            }
+            transformCaptureList(f.body, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::SwitchStatement: {
+            auto& s = static_cast<AST::SwitchStatement&>(*node);
+            s.subject = transformCaptureRef(s.subject, captureSet, envName);
+            for (auto& arm : s.arms)
+                transformCaptureList(arm.body, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::VariableDeclaration: {
+            auto& d = static_cast<AST::VariableDeclarationExpr&>(*node);
+            if (d.initialValue)
+                d.initialValue = transformCaptureRef(d.initialValue, captureSet, envName);
+            return node;
+        }
+        case AST::NodeType::UnsafeBlock: {
+            auto& u = static_cast<AST::UnsafeBlock&>(*node);
+            transformCaptureList(u.body, captureSet, envName);
+            return node;
+        }
+        default:
+            return node;
+    }
+}
+
+void transformCaptureList(AST::NodeList& body,
+                           const std::set<std::string>& captureSet,
+                           const std::string& envName) {
+    for (auto& stmt : body) stmt = transformCaptureRef(stmt, captureSet, envName);
+}
+
+} // anonymous namespace
+
 Types::TypeRef Checker::checkLambda(AST::LambdaExpr* node) {
     if (!node || !node->function) return record(node, types_.errorType());
     AST::FunctionDeclaration* fn = node->function.get();
@@ -1784,9 +1993,62 @@ Types::TypeRef Checker::checkLambda(AST::LambdaExpr* node) {
         paramTypes.push_back(resolveTypeSpelling(p.type, node));
     }
 
-    // Check the body in an ISOLATED scope so the lambda cannot capture the
-    // enclosing function's locals (non-capturing lambdas only), and infer the
-    // return type from its `return` statements.
+    // --- Capture detection ---
+    // Walk the body BEFORE isolating scopes; any identifier that exists in
+    // enclosing scopes (but is not a lambda parameter) is a capture.
+    std::set<std::string> paramNames;
+    for (const auto& p : fn->parameters) paramNames.insert(p.name);
+    std::set<std::string> captureSet;
+    collectCapturesInList(fn->body, paramNames, captureSet);
+
+    // Determine capture types from the enclosing scope
+    std::map<std::string, Types::TypeRef> captureTypes;
+    for (const auto& cap : captureSet) {
+        Types::TypeRef ct = lookupLocal(cap);
+        if (ct) captureTypes[cap] = ct;
+    }
+
+    // Build the ordered capture list
+    node->captures.clear();
+    for (const auto& cap : captureSet) node->captures.push_back(cap);
+
+    Types::TypeRef envStructType = nullptr;
+    Types::TypeRef envPtrType = nullptr;
+
+    if (!node->captures.empty()) {
+        // Create an environment struct for the captured variables
+        static int envCounter = 0;
+        std::string envName = "__closure_env_" + std::to_string(envCounter++);
+        node->envStructName = envName;
+
+        StructInfo sinfo;
+        sinfo.name = envName;
+        sinfo.fields.emplace_back("__fn", types_.pointerType(types_.voidType()));
+        for (const auto& cap : node->captures) {
+            auto it = captureTypes.find(cap);
+            sinfo.fields.emplace_back(cap,
+                it != captureTypes.end() ? it->second : types_.voidType());
+        }
+        result_.structs.push_back(sinfo);
+        types_.registerNamed(envName, Types::Kind::Struct);
+
+        envStructType = types_.namedType(Types::Kind::Struct, envName);
+        envPtrType = types_.pointerType(envStructType);
+
+        // Prepend __env parameter to the lifted function
+        AST::Parameter envParam;
+        envParam.name = "__env";
+        envParam.type = envName + "*";
+        fn->parameters.insert(fn->parameters.begin(), std::move(envParam));
+
+        // Resolve __env's type for the paramTypes list
+        paramTypes.insert(paramTypes.begin(), envPtrType);
+
+        // Transform the body: replace captured-var references with __env.field
+        transformCaptureList(fn->body, captureSet, "__env");
+    }
+
+    // Isolate the scope and infer the return type (original logic, unchanged)
     std::vector<Scope> savedScopes = std::move(scopes_);
     scopes_.clear();
     const FunctionInfo* savedFn = currentFn_;
@@ -1842,7 +2104,11 @@ Types::TypeRef Checker::checkLambda(AST::LambdaExpr* node) {
         result_.functions.push_back(std::move(info));
     }
 
-    return record(node, types_.functionType(paramTypes, ret));
+    return record(node, node->captures.empty()
+                             ? types_.functionType(paramTypes, ret)
+                             : types_.closureType(types_.functionType(
+                                   std::vector<Types::TypeRef>(paramTypes.begin() + 1, paramTypes.end()),
+                                   ret)));
 }
 
 Types::TypeRef Checker::checkAddressOf(AST::AddressOfExpr* node) {
@@ -2117,5 +2383,7 @@ void Checker::checkInterpolation(AST::StringLiteral* node) {
 }
 
 }
+
+
 
 

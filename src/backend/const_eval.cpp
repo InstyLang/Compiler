@@ -24,6 +24,12 @@ SizeAlign scalarSizeAlign(Types::TypeRef t) {
             return {8, 8};
         case Types::Kind::Slice:
             return {16, 8};
+        case Types::Kind::Any:
+            return {24, 8};
+        case Types::Kind::Object:
+            return {8, 8};
+        case Types::Kind::Closure:
+            return {8, 8};
         case Types::Kind::Array: {
             SizeAlign el = scalarSizeAlign(t->element);
             std::uint64_t n =

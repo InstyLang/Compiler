@@ -74,8 +74,6 @@ AST::NodePtr Parser::parseStatement() {
             return parseWhen();
         case TokenType::KwSwitch:
             return parseSwitch();
-        case TokenType::KwMatch:
-            return parseMatch();
         case TokenType::KwReturn:
             return parseReturn();
         case TokenType::KwUnsafe:
@@ -254,3 +252,4 @@ AST::NodePtr Parser::parseSectionBlock() {
     fillRange(*node, bodyStart);
     return node;
 }
+

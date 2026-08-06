@@ -21,19 +21,6 @@ std::vector<SwitchArm> cloneSwitchArms(const std::vector<SwitchArm>& arms) {
     out.reserve(arms.size());
     for (const auto& arm : arms) {
         SwitchArm copy;
-        copy.patterns = cloneNodeList(arm.patterns);
-        copy.body = cloneNodeList(arm.body);
-        copy.isDefault = arm.isDefault;
-        out.push_back(std::move(copy));
-    }
-    return out;
-}
-
-std::vector<MatchArm> cloneMatchArms(const std::vector<MatchArm>& arms) {
-    std::vector<MatchArm> out;
-    out.reserve(arms.size());
-    for (const auto& arm : arms) {
-        MatchArm copy;
         copy.variant = arm.variant;
         copy.bindings = arm.bindings;
         copy.body = cloneNodeList(arm.body);
@@ -185,13 +172,6 @@ NodePtr cloneNode(const NodePtr& node) {
             auto out = make<SwitchStatement>(n);
             out->subject = cloneNode(n.subject);
             out->arms = cloneSwitchArms(n.arms);
-            return out;
-        }
-        case NodeType::MatchStatement: {
-            const auto& n = static_cast<const MatchStatement&>(*node);
-            auto out = make<MatchStatement>(n);
-            out->subject = cloneNode(n.subject);
-            out->arms = cloneMatchArms(n.arms);
             return out;
         }
         case NodeType::ReturnStatement: {

@@ -71,7 +71,6 @@ public:
     void checkLoop(AST::InfiniteLoop* node);
     void checkWhen(AST::WhenStatement* node);
     void checkSwitch(AST::SwitchStatement* node);
-    void checkMatch(AST::MatchStatement* node);
     void checkReturn(AST::ReturnStatement* node);
     const SumTypeInfo* sumTypeByName(const std::string& name) const;
     // If `node` is a sum-variant construction/reference `E.Variant`, returns the
@@ -168,3 +167,4 @@ private:
 };
 
 }
+

@@ -8,7 +8,7 @@ import sum_xmod_dep
 fun count_nodes(Expr* e) -> i64 {
     Expr node
     unsafe { node = ~e }
-    match node {
+    switch node {
         Lit(v) => return 1
         Add(l, r) => return count_nodes(l) + count_nodes(r) + 1
         Neg(x) => return count_nodes(x) + 1
@@ -33,3 +33,4 @@ fun main() -> i32 {
 
     return cast<i32>(sum + n + e2)     // 42 + 5 - 5 = 42
 }
+

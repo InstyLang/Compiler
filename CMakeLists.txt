@@ -109,7 +109,6 @@ add_library(InstyParse STATIC
     src/parser/statements/vars-fn.cpp
     src/parser/statements/when.cpp
     src/parser/statements/switch.cpp
-    src/parser/statements/match.cpp
     src/parser/statements/while.cpp
     src/parser/statements/for.cpp
     src/parser/statements/loop.cpp
@@ -732,7 +731,7 @@ if(INSTY_BUILD_TESTS)
         )
     endif()
 
-    # Tagged-union enums (sum types) + `match`: a recursive expression AST built
+    # Tagged-union enums (sum types) + `switch`: a recursive expression AST built
     # on the heap and evaluated by pattern matching, plus a by-value sum type with
     # a unit variant and a `_` arm. Native build+run returns 42; object-emission
     # guards the codegen path on every platform.
@@ -1879,6 +1878,8 @@ if(INSTY_BUILD_TESTS)
         endif()
     endif()
 endif()
+
+
 
 
 

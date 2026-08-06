@@ -52,7 +52,6 @@ public:
     AST::NodePtr parseLoop();
     AST::NodePtr parseWhen();
     AST::NodePtr parseSwitch();
-    AST::NodePtr parseMatch();
     AST::NodePtr parseReturn();
     AST::NodePtr parseUnsafeBlock();
     AST::NodePtr parseCompileTimeIf();
@@ -102,4 +101,5 @@ private:
     void fillRange(AST::ExprAST& node, const Token& startToken) const;
     void fillRange(AST::ExprAST& node, const Token& startToken, const Token& endToken) const;
 };
+
 

@@ -30,7 +30,8 @@ bool isPrimitiveSpelling(const std::string& name) {
         "void", "bool", "text",
         "i8", "i16", "i32", "i64", "i128",
         "u8", "u16", "u32", "u64", "u128",
-        "f16", "f32", "f64", "f128"
+        "f16", "f32", "f64", "f128",
+        "any", "object"
     };
     for (const char* p : prims) {
         if (name == p) {
@@ -47,6 +48,8 @@ TypeContext::TypeContext() {
     bool_.bitWidth = 1;
     text_.kind = Kind::Text;
     error_.kind = Kind::Error;
+    any_.kind = Kind::Any;
+    object_.kind = Kind::Object;
 }
 
 TypeRef TypeContext::intern(Type prototype) {
@@ -103,6 +106,13 @@ TypeRef TypeContext::functionType(const std::vector<TypeRef>& params,
     t.kind = Kind::Function;
     t.params = params;
     t.returnType = returnType;
+    return intern(t);
+}
+
+TypeRef TypeContext::closureType(TypeRef functionType) {
+    Type t;
+    t.kind = Kind::Closure;
+    t.element = functionType;
     return intern(t);
 }
 
@@ -220,6 +230,8 @@ TypeRef TypeContext::fromString(const std::string& spelling) {
     if (s == "f32") return floatType(32);
     if (s == "f64") return floatType(64);
     if (s == "f128") return floatType(128);
+    if (s == "any") return anyType();
+    if (s == "object") return objectType();
 
     for (const auto& entry : named_) {
         if (entry.first == s) {
@@ -261,6 +273,9 @@ std::string TypeContext::toString(TypeRef type) const {
             return s;
         }
         case Kind::Error: return "<error>";
+        case Kind::Any: return "any";
+        case Kind::Object: return "object";
+        case Kind::Closure: return "closure(" + toString(type->element) + ")";
     }
     return "<?>";
 }
@@ -299,6 +314,8 @@ bool TypeContext::equals(TypeRef a, TypeRef b) {
             }
             return true;
         }
+        case Kind::Closure:
+            return equals(a->element, b->element);
         default:
             return true;
     }

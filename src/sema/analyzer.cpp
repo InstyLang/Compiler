@@ -129,7 +129,7 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
 
     // Imported tagged-union (sum-type) metadata: the empty StructInfo + name are
     // brought in via importedStructs above; here we bring the variant metadata so
-    // construction (`E.Variant(...)`) and `match` resolve, and the backend can lay
+    // construction (`E.Variant(...)`) and `switch` resolve, and the backend can lay
     // the aggregate out. TypeRefs are valid because the whole build shares one
     // TypeContext.
     for (const auto& st : importedSumTypes) {
@@ -206,3 +206,4 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
 }
 
 }
+

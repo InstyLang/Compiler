@@ -33,7 +33,6 @@ enum class TokenType {
     KwLoop,
     KwWhen,
     KwSwitch,
-    KwMatch,
     KwReturn,
     KwBreak,
     KwSkip,
@@ -140,4 +139,5 @@ private:
 
 TokenType keywordTokenType(const std::string& word);
 bool isPrimitiveTypeName(const std::string& word);
+
 
