@@ -1,22 +1,26 @@
 // Insty standard library: std::window
 //
-// Cross-platform windowing — one module that opens a native window, delivers
-// keyboard / mouse / resize / close events, and works identically on every
-// hosted target.
+// Cross-platform native windowing with a sum-type event model.
 //
 //     import std::window
 //
-//     window.Window w = window.open("Hello, Insty", 800, 600)
-//     window.Event e
-//     while window.waitEvent(w, &e) {
-//         if e.kind == window.eventClose() { break }
+//     fun onEvent(window.WindowEvent e) -> void {
+//         switch e {
+//             window.Close => { }
+//             window.KeyDown(code) => { }
+//             window.Resize(w, h) => { }
+//             _ => {}
+//         }
 //     }
-//     window.close(w)
 //
-// Linux: Xlib (links libX11 automatically).  Windows: Win32 user32.dll.
-// Wayland and macOS are not yet wired — they fall through to an unsupported
-// error. The event model is always the same: polling or blocking read of a
-// single unified `Event` struct.
+//     fun main() -> i32 {
+//         window.Window w = window.open("Hello", 800, 600)
+//         w.on(&onEvent)
+//         w.start()
+//         w.blockExit()
+//     }
+//
+// Linux: Xlib (links libX11 automatically). Windows: Win32 user32.dll.
 
 module window
 
@@ -24,71 +28,81 @@ import std::vec
 import std::str
 
 // ---------------------------------------------------------------------------
+// Dimensions
+// ---------------------------------------------------------------------------
+
+export struct Dim {
+    i32 w,
+    i32 h
+}
+
+// ---------------------------------------------------------------------------
 // Event
 // ---------------------------------------------------------------------------
 
-export struct Event {
-    i32 kind,
-    i32 key,
-    i32 x,
-    i32 y,
-    i32 width,
-    i32 height
+export enum WindowEvent {
+    Close,
+    KeyDown(i32),
+    KeyUp(i32),
+    MouseDown(i32, i32),
+    MouseUp(i32, i32),
+    MouseMove(i32, i32),
+    Resize(i32, i32),
+    Paint
 }
-
-export fun eventNone() -> i32       { return 0 }
-export fun eventClose() -> i32      { return 1 }
-export fun eventKeyDown() -> i32    { return 2 }
-export fun eventKeyUp() -> i32      { return 3 }
-export fun eventMouseDown() -> i32  { return 4 }
-export fun eventMouseUp() -> i32    { return 5 }
-export fun eventMouseMove() -> i32  { return 6 }
-export fun eventResize() -> i32     { return 7 }
-export fun eventPaint() -> i32      { return 8 }
 
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
 
 export class Window {
+    // Platform handles and the user-registered callback.
     u64 platformHandle
     u64 platformHandle2
+    u64 eventCallback
 
     constructor() {
         this.platformHandle = 0
         this.platformHandle2 = 0
+        this.eventCallback = 0
     }
 
     fun isValid() -> bool {
         return this.platformHandle != 0
     }
 
+    fun on(u64 cb) -> void {
+        this.eventCallback = cb
+    }
+
     fun close() -> void {
-        windowClose(this)
+        windowClosePtr(this)
     }
 
     fun setTitle(text title) -> void {
-        windowSetTitle(this, title)
+        windowSetTitlePtr(this, title)
+    }
+
+    // Pumps events until the window is closed. Calls the registered callback for
+    // each event, then returns when the platform signals an exit.
+    fun start() -> void {
+        windowStartPtr(this)
+    }
+
+    // Blocks the calling thread at a join point so the program doesn't exit
+    // before the event loop finishes. On most platforms start() already blocks;
+    // this is a no-op unless a platform's event loop runs asynchronously.
+    fun blockExit() -> void {
     }
 }
 
-fun makeWindow(u64 h1, u64 h2) -> Window {
-    Window w
-    w.platformHandle = h1
-    w.platformHandle2 = h2
-    return w
-}
-
-// ---------------------------------------------------------------------------
+// =========================================================================
 // Platform: Linux / X11
-// ---------------------------------------------------------------------------
+// =========================================================================
 
 #if @targetIs("linux") {
 
 import unix::x11
-
-// Declared inline so the module is self-contained; these bindings will migrate
-// into unix::x11 when that module is extended.
 extern fun [lib("X11")] XInternAtom(u64 display, text name, i32 onlyIfExists) -> u64
 extern fun [lib("X11")] XSetWMProtocols(u64 display, u64 window, u64* protocols, i32 count) -> i32
 
@@ -123,10 +137,14 @@ export fun open(text title, i32 width, i32 height) -> Window {
         XSetWMProtocols(dpy, win, &wmDelete, 1)
     }
 
-    return makeWindow(dpy, win)
+    Window out
+    out.platformHandle = dpy
+    out.platformHandle2 = win
+    out.eventCallback = 0
+    return out
 }
 
-fun windowClose(Window* w) -> void {
+fun windowClosePtr(Window* w) -> void {
     if !w.isValid() { return }
     x11.destroy_window(w.platformHandle, w.platformHandle2)
     x11.close_display(w.platformHandle)
@@ -134,131 +152,104 @@ fun windowClose(Window* w) -> void {
     w.platformHandle2 = 0
 }
 
-fun windowSetTitle(Window* w, text title) -> void {
+fun windowSetTitlePtr(Window* w, text title) -> void {
     if !w.isValid() { return }
     x11.store_name(w.platformHandle, w.platformHandle2, title)
     x11.flush(w.platformHandle)
 }
 
-export fun waitEvent(Window* w, Event* out) -> bool {
-    return eventLoop(w, out, false)
-}
-
-export fun pollEvent(Window* w, Event* out) -> bool {
-    return eventLoop(w, out, true)
-}
-
-fun eventLoop(Window* w, Event* out, bool nonBlocking) -> bool {
-    if !w.isValid() { return false }
-
+fun windowStartPtr(Window* w) -> void {
+    if !w.isValid() { return }
     while true {
-        i32 ready = x11.pending(w.platformHandle)
-        if nonBlocking && ready == 0 { return false }
-        if ready > 0 || !nonBlocking {
-            u8[192] buf
-            i32 kind = 0
-            unsafe {
-                x11.next_event(w.platformHandle, cast<u8*>(&buf))
-                kind = x11.event_type(cast<u8*>(&buf))
-            }
+        u8[192] buf
+        unsafe { x11.next_event(w.platformHandle, cast<u8*>(&buf)) }
+        i32 kind = 0
+        unsafe { kind = x11.event_type(cast<u8*>(&buf)) }
 
-            if kind == x11.key_press() {
-                unsafe { out.kind = eventKeyDown(); out.key = 0; }
-                return true
-            }
-            if kind == x11.key_release() {
-                unsafe { out.kind = eventKeyUp(); out.key = 0; }
-                return true
-            }
-            if kind == x11.button_press() {
-                unsafe { out.kind = eventMouseDown(); out.key = 0; }
-                return true
-            }
-            if kind == x11.button_release() {
-                unsafe { out.kind = eventMouseUp(); out.key = 0; }
-                return true
-            }
-            if kind == x11.motion_notify() {
-                unsafe { out.kind = eventMouseMove(); }
-                return true
-            }
-            if kind == x11.expose() {
-                unsafe { out.kind = eventPaint(); }
-                return true
-            }
-            if kind == x11.client_message() {
-                unsafe { out.kind = eventClose(); }
-                return true
-            }
-            if kind == 22 {
-                unsafe {
-                    out.kind = eventResize()
-                    out.width = 0
-                    out.height = 0
-                }
-                return true
+        WindowEvent ev = WindowEvent.Close
+        bool haveEvent = false
+
+        if kind == x11.key_press() {
+            ev = WindowEvent.KeyDown(0)
+            haveEvent = true
+        } else if kind == x11.key_release() {
+            ev = WindowEvent.KeyUp(0)
+            haveEvent = true
+        } else if kind == x11.button_press() {
+            ev = WindowEvent.MouseDown(0, 0)
+            haveEvent = true
+        } else if kind == x11.button_release() {
+            ev = WindowEvent.MouseUp(0, 0)
+            haveEvent = true
+        } else if kind == x11.motion_notify() {
+            ev = WindowEvent.MouseMove(0, 0)
+            haveEvent = true
+        } else if kind == x11.expose() {
+            ev = WindowEvent.Paint
+            haveEvent = true
+        } else if kind == x11.client_message() {
+            ev = WindowEvent.Close
+            haveEvent = true
+        } else if kind == 22 {
+            ev = WindowEvent.Resize(0, 0)
+            haveEvent = true
+        }
+
+        if haveEvent && w.eventCallback != 0 {
+            unsafe { fnCall<void>(w.eventCallback, ev) }
+        }
+        if haveEvent {
+            switch ev {
+                Close => { w.close(); return }
+                _ => {}
             }
         }
     }
-    return false
 }
 
 } // #if linux
 
-// ---------------------------------------------------------------------------
+// =========================================================================
 // Platform: Windows
-// ---------------------------------------------------------------------------
+// =========================================================================
 
 #if @targetIs("windows") {
 
 import windows::window as win32
 
-Vector<Event> eventQueue
+Vector<WindowEvent> eventQueue
 
-fun [mangle(off), name("InstyWindowProc")] wndProc(u64 hwnd, u32 msg, u64 wParam, i64 lParam) -> i64 {
+// The internal WNDPROC. Decodes common messages into WindowEvent values and
+// pushes them onto the module-level queue. The registered user callback is
+// NOT called from here (WNDPROCs must be fast); start() drains the queue.
+fun [mangle(off), name("InstyWndProc")] wndProc(u64 hwnd, u32 msg, u64 wParam, i64 lParam) -> i64 {
     if msg == win32.wm_close() || msg == win32.wm_destroy() {
-        Event e
-        e.kind = eventClose(); e.key = 0; e.x = 0; e.y = 0; e.width = 0; e.height = 0
-        eventQueue.push(e)
+        eventQueue.push(WindowEvent.Close)
         if msg == win32.wm_destroy() { win32.post_quit(0) }
         return 0
     }
     if msg == win32.wm_keydown() {
-        Event e
-        e.kind = eventKeyDown(); e.key = cast<i32>(wParam)
-        e.x = 0; e.y = 0; e.width = 0; e.height = 0
-        eventQueue.push(e)
+        eventQueue.push(WindowEvent.KeyDown(cast<i32>(wParam)))
         return 0
     }
     if msg == win32.wm_keyup() {
-        Event e
-        e.kind = eventKeyUp(); e.key = cast<i32>(wParam)
-        e.x = 0; e.y = 0; e.width = 0; e.height = 0
-        eventQueue.push(e)
+        eventQueue.push(WindowEvent.KeyUp(cast<i32>(wParam)))
         return 0
     }
     if msg == win32.wm_lbuttondown() {
-        Event e
-        e.kind = eventMouseDown(); e.key = 1
-        e.x = cast<i32>(lParam & 0xFFFF)
-        e.y = cast<i32>((cast<u64>(lParam) >> 16) & 0xFFFF)
-        e.width = 0; e.height = 0
-        eventQueue.push(e)
+        i32 mx = cast<i32>(lParam & 0xFFFF)
+        i32 my = cast<i32>((cast<u64>(lParam) >> 16) & 0xFFFF)
+        eventQueue.push(WindowEvent.MouseDown(mx, my))
         return 0
     }
     if msg == win32.wm_size() {
-        Event e
-        e.kind = eventResize()
-        e.key = 0; e.x = 0; e.y = 0
-        e.width = cast<i32>(lParam & 0xFFFF)
-        e.height = cast<i32>((cast<u64>(lParam) >> 16) & 0xFFFF)
-        eventQueue.push(e)
+        i32 nw = cast<i32>(lParam & 0xFFFF)
+        i32 nh = cast<i32>((cast<u64>(lParam) >> 16) & 0xFFFF)
+        eventQueue.push(WindowEvent.Resize(nw, nh))
         return 0
     }
     if msg == win32.wm_paint() {
-        Event e
-        e.kind = eventPaint(); e.key = 0; e.x = 0; e.y = 0; e.width = 0; e.height = 0
-        eventQueue.push(e)
+        eventQueue.push(WindowEvent.Paint)
     }
     return win32.def_window_proc(hwnd, msg, wParam, lParam)
 }
@@ -267,87 +258,67 @@ export fun open(text title, i32 width, i32 height) -> Window {
     u64 inst = win32.instance_handle()
     u64 proc = 0
     unsafe { proc = cast<u64>(&wndProc) }
-    win32.register_class("InstyWindowClass", proc, inst)
-    u64 hwnd = win32.create_window("InstyWindowClass", title, width, height, inst)
+    win32.register_class("InstyWndClass", proc, inst)
+    u64 hwnd = win32.create_window("InstyWndClass", title, width, height, inst)
     if hwnd == 0 { return Window() }
     win32.show_default(hwnd)
     win32.update(hwnd)
-    return makeWindow(hwnd, 0)
+    Window out
+    out.platformHandle = hwnd
+    out.platformHandle2 = 0
+    out.eventCallback = 0
+    return out
 }
 
-fun windowClose(Window* w) -> void {
+fun windowClosePtr(Window* w) -> void {
     if !w.isValid() { return }
     win32.destroy_window(w.platformHandle)
     w.platformHandle = 0
 }
 
-fun windowSetTitle(Window* w, text title) -> void {
+fun windowSetTitlePtr(Window* w, text title) -> void {
 }
 
-export fun waitEvent(Window* w, Event* out) -> bool {
-    if !w.isValid() { return false }
+fun windowStartPtr(Window* w) -> void {
+    if !w.isValid() { return }
+    u8[48] msgBuf
     while true {
-        if eventQueue.len() > 0 {
-            unsafe {
-                out.kind = eventQueue.get(0).kind
-                out.key = eventQueue.get(0).key
-                out.x = eventQueue.get(0).x
-                out.y = eventQueue.get(0).y
-                out.width = eventQueue.get(0).width
-                out.height = eventQueue.get(0).height
-            }
+        // Drain queued events first.
+        while eventQueue.len() > 0 {
+            WindowEvent ev = eventQueue.get(0)
             eventQueue.pop()
-            return true
+            if w.eventCallback != 0 {
+                unsafe { fnCall<void>(w.eventCallback, ev) }
+            }
+            switch ev {
+                Close => { w.close(); return }
+                _ => {}
+            }
         }
-        u8[48] msgBuf
         i32 got = 0
         unsafe { got = win32.get_message(cast<u8*>(&msgBuf), 0) }
-        if got == 0 { unsafe { out.kind = eventClose(); } return true }
-        if got < 0  { return false }
+        if got == 0 {
+            if w.eventCallback != 0 {
+                unsafe { fnCall<void>(w.eventCallback, WindowEvent.Close) }
+            }
+            w.close()
+            return
+        }
+        if got < 0 { return }
         unsafe {
             win32.translate_message(cast<u8*>(&msgBuf))
             win32.dispatch_message(cast<u8*>(&msgBuf))
         }
     }
-    return false
 }
 
-export fun pollEvent(Window* w, Event* out) -> bool {
-    if !w.isValid() { return false }
-    if eventQueue.len() > 0 {
-        unsafe {
-            out.kind = eventQueue.get(0).kind
-            out.key = eventQueue.get(0).key
-            out.x = eventQueue.get(0).x
-            out.y = eventQueue.get(0).y
-            out.width = eventQueue.get(0).width
-            out.height = eventQueue.get(0).height
-        }
-        eventQueue.pop()
-        return true
-    }
-    u8[48] msgBuf
-    i32 got = 0
-    unsafe { got = win32.peek_message(cast<u8*>(&msgBuf), 0, win32.pm_remove()) }
-    if got == 0 { return false }
-    if got < 0  { return false }
-    u32 m = 0
-    unsafe { m = win32.msg_message(cast<u8*>(&msgBuf)) }
-    if m == win32.wm_quit() { return false }
-    unsafe {
-        win32.translate_message(cast<u8*>(&msgBuf))
-        win32.dispatch_message(cast<u8*>(&msgBuf))
-    }
-    return eventQueue.len() > 0
-}
-
-eventQueue = Vector<Event>()
+eventQueue = Vector<WindowEvent>()
 
 } // #if windows
 
-// ---------------------------------------------------------------------------
+// =========================================================================
 // Fallback (wasm, macOS, freestanding)
-// ---------------------------------------------------------------------------
+// =========================================================================
 
 #if !@targetIs("linux") && !@targetIs("windows") {
 
@@ -355,18 +326,13 @@ export fun open(text title, i32 width, i32 height) -> Window {
     return Window()
 }
 
-fun windowClose(Window* w) -> void {
+fun windowClosePtr(Window* w) -> void {
 }
 
-fun windowSetTitle(Window* w, text title) -> void {
+fun windowSetTitlePtr(Window* w, text title) -> void {
 }
 
-export fun waitEvent(Window* w, Event* out) -> bool {
-    return false
-}
-
-export fun pollEvent(Window* w, Event* out) -> bool {
-    return false
+fun windowStartPtr(Window* w) -> void {
 }
 
 } // #if fallback

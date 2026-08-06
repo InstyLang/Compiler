@@ -2,25 +2,38 @@ module main
 
 import std::window
 
+fun onEvent(window.WindowEvent e) -> void {
+    switch e {
+        Close => return
+        KeyDown(code) => return
+        Resize(w, h) => return
+        _ => return
+    }
+}
+
 fun main() -> i32 {
-    // Can construct and check validity.
+    // Struct literal — works.
+    window.Dim d = Dim{w: 800, h: 600}
+    if d.w != 800 { return 1 }
+
+    // Closed window lifecycle is harmless.
     window.Window w = Window()
-    if w.isValid() { return 1 }
+    if w.isValid() { return 2 }
     w.close()
+    w.setTitle("no crash")
 
-    // Event constants compile.
-    if window.eventClose() != 1 { return 2 }
-    if window.eventKeyDown() != 2 { return 3 }
-    if window.eventPaint() != 8 { return 4 }
+    // Register handler via function pointer.
+    unsafe { w.on(cast<u64>(&onEvent)) }
 
-    // Event struct fields.
-    window.Event e
-    e.kind = window.eventNone()
-    e.key = 0
-    e.x = 0
-    e.y = 0
-    e.width = 0
-    e.height = 0
+    // Unit variants cross module boundaries.
+    window.WindowEvent c = window.Close
+    window.WindowEvent p = window.Paint
+    switch c {
+        Close => {}
+        _ => {}
+    }
+
+    w.blockExit()
 
     return 0
 }
