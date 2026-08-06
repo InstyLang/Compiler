@@ -1,0 +1,26 @@
+module main
+
+import std::window
+
+fun main() -> i32 {
+    // Can construct and check validity.
+    window.Window w = Window()
+    if w.isValid() { return 1 }
+    w.close()
+
+    // Event constants compile.
+    if window.eventClose() != 1 { return 2 }
+    if window.eventKeyDown() != 2 { return 3 }
+    if window.eventPaint() != 8 { return 4 }
+
+    // Event struct fields.
+    window.Event e
+    e.kind = window.eventNone()
+    e.key = 0
+    e.x = 0
+    e.y = 0
+    e.width = 0
+    e.height = 0
+
+    return 0
+}
