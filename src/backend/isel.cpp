@@ -1793,6 +1793,144 @@ void InstructionSelector::selAssign(const AST::AssignmentExpr& a) {
         emit(st);
         return;
     }
+    // Object field assignment: obj.key = val -> slot lookup + store
+    if (a.target->nodeType() == AST::NodeType::MemberAccess) {
+        const auto& m = static_cast<const AST::MemberAccessExpr&>(*a.target);
+        Types::TypeRef baseTy = concreteTypeOf(m.object.get());
+        if (baseTy && baseTy->kind == Types::Kind::Object) {
+            VReg objPtr = selExpr(m.object);
+            if (failed_) return;
+            VReg valReg = selExpr(a.value);
+            if (failed_) return;
+            Types::TypeRef vt = concreteTypeOf(a.value.get());
+            std::int64_t tag = 0;
+            if (vt) {
+                if (vt->kind == Types::Kind::Int) tag = 1;
+                else if (vt->kind == Types::Kind::Float) tag = 2;
+                else if (vt->kind == Types::Kind::Text) tag = 3;
+                else if (vt->kind == Types::Kind::Bool) tag = 4;
+                else if (vt->kind == Types::Kind::Object) tag = 5;
+            }
+            VReg valLo = valReg;
+            VReg valHi = fn_->newVReg();
+            emit({MOpcode::MovRI, {MOperand::defVReg(valHi), MOperand::immediate(0)}});
+            if (vt && vt->kind == Types::Kind::Float) {
+                valLo = fn_->newVReg();
+                std::uint8_t fw = floatWidthOf(vt) == 4 ? 4u : 8u;
+                emitFW(MOpcode::FMovToGpr,
+                       {MOperand::defVReg(valLo), MOperand::useVReg(valReg)}, fw);
+            }
+            // Get key string for dot access or evaluate key expression for index
+            VReg keyPtr = kInvalidVReg;
+            if (!m.computed && m.property &&
+                m.property->nodeType() == AST::NodeType::IdentifierExpr) {
+                std::string keySym = ".Lobjk." + std::to_string(stringCounter_++);
+                fn_->addStringConstant(keySym,
+                    static_cast<const AST::IdentifierExpr&>(*m.property).name);
+                keyPtr = fn_->newVReg();
+                emit({MOpcode::Lea, {MOperand::defVReg(keyPtr), MOperand::sym(keySym)}});
+            } else if (m.computed && m.property) {
+                keyPtr = selExpr(m.property);
+                if (failed_) return;
+            }
+            if (keyPtr == kInvalidVReg) return;
+            // Scan for matching key, update slot val_lo/val_hi/tag
+            std::uint32_t foundBlk = fn_->addBlock();
+            std::uint32_t missBlk  = fn_->addBlock();
+            // Pre-scan: try to match an existing key
+            for (unsigned i = 0; i < 8; ++i) {
+                std::int64_t off = static_cast<std::int64_t>(i * 32);
+                VReg sk = fn_->newVReg();
+                MInst ld{MOpcode::LoadInd,
+                         {MOperand::defVReg(sk), MOperand::useVReg(objPtr),
+                          MOperand::immediate(off)}};
+                ld.width = 8; ld.isSigned = false; emit(ld);
+                emit({MOpcode::Cmp, {MOperand::useVReg(sk), MOperand::useVReg(keyPtr)}});
+                MInst j{MOpcode::Jcc, {MOperand::lbl(foundBlk)}};
+                j.cond = Cond::EQ; emit(j);
+            }
+            emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
+            // Update found slot
+            curBlock_ = foundBlk;
+            for (unsigned i = 0; i < 8; ++i) {
+                std::int64_t off = static_cast<std::int64_t>(i * 32);
+                VReg sk = fn_->newVReg();
+                MInst ld{MOpcode::LoadInd,
+                         {MOperand::defVReg(sk), MOperand::useVReg(objPtr),
+                          MOperand::immediate(off)}};
+                ld.width = 8; ld.isSigned = false; emit(ld);
+                emit({MOpcode::Cmp, {MOperand::useVReg(sk), MOperand::useVReg(keyPtr)}});
+                std::uint32_t updB = fn_->addBlock();
+                std::uint32_t skpB = fn_->addBlock();
+                MInst j{MOpcode::Jcc, {MOperand::lbl(updB)}};
+                j.cond = Cond::EQ; emit(j);
+                emit({MOpcode::Jmp, {MOperand::lbl(skpB)}});
+                curBlock_ = updB;
+                MInst sv{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 8),
+                          MOperand::useVReg(valLo)}};
+                sv.width = 8; sv.isSigned = false; emit(sv);
+                MInst sh{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 16),
+                          MOperand::useVReg(valHi)}};
+                sh.width = 8; sh.isSigned = false; emit(sh);
+                VReg tv = fn_->newVReg();
+                emit({MOpcode::MovRI,
+                      {MOperand::defVReg(tv), MOperand::immediate(tag)}});
+                MInst st{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 24),
+                          MOperand::useVReg(tv)}};
+                st.width = 8; st.isSigned = false; emit(st);
+                emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
+                curBlock_ = skpB;
+            }
+            // Insert into first empty slot (slot with key==0)
+            curBlock_ = missBlk;
+            std::uint32_t doneBlk = fn_->addBlock();
+            for (unsigned i = 0; i < 8; ++i) {
+                std::int64_t off = static_cast<std::int64_t>(i * 32);
+                VReg sk = fn_->newVReg();
+                MInst ld{MOpcode::LoadInd,
+                         {MOperand::defVReg(sk), MOperand::useVReg(objPtr),
+                          MOperand::immediate(off)}};
+                ld.width = 8; ld.isSigned = false; emit(ld);
+                VReg zeroV = fn_->newVReg();
+                emit({MOpcode::MovRI, {MOperand::defVReg(zeroV), MOperand::immediate(0)}});
+                emit({MOpcode::Cmp, {MOperand::useVReg(sk), MOperand::useVReg(zeroV)}});
+                std::uint32_t insB = fn_->addBlock();
+                std::uint32_t nxtB = fn_->addBlock();
+                MInst j{MOpcode::Jcc, {MOperand::lbl(insB)}};
+                j.cond = Cond::EQ; emit(j);
+                emit({MOpcode::Jmp, {MOperand::lbl(nxtB)}});
+                curBlock_ = insB;
+                MInst skv{MOpcode::StoreInd,
+                          {MOperand::useVReg(objPtr), MOperand::immediate(off),
+                           MOperand::useVReg(keyPtr)}};
+                skv.width = 8; skv.isSigned = false; emit(skv);
+                MInst sv{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 8),
+                          MOperand::useVReg(valLo)}};
+                sv.width = 8; sv.isSigned = false; emit(sv);
+                MInst sh{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 16),
+                          MOperand::useVReg(valHi)}};
+                sh.width = 8; sh.isSigned = false; emit(sh);
+                VReg tv = fn_->newVReg();
+                emit({MOpcode::MovRI,
+                      {MOperand::defVReg(tv), MOperand::immediate(tag)}});
+                MInst st{MOpcode::StoreInd,
+                         {MOperand::useVReg(objPtr), MOperand::immediate(off + 24),
+                          MOperand::useVReg(tv)}};
+                st.width = 8; st.isSigned = false; emit(st);
+                emit({MOpcode::Jmp, {MOperand::lbl(doneBlk)}});
+                curBlock_ = nxtB;
+            }
+            // All slots full or no empty: just fall through
+            emit({MOpcode::Jmp, {MOperand::lbl(doneBlk)}});
+            curBlock_ = doneBlk;
+            return;
+        }
+    }
     // `a[i] = v` / `a.field = v` / `a[i].field = v` : store through the computed
     // element/field address (constant index scaling + field offset fold into the
     // store's displacement).
@@ -2744,6 +2882,108 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
             fail("selector: lambda '" + lam.name + "' was not registered by sema");
             return kInvalidVReg;
         }
+        case AST::NodeType::ObjectLiteral: {
+            const auto& ol = static_cast<const AST::ObjectLiteral&>(*expr);
+            // Simple fixed-capacity object: 8 slots of {key_ptr, tag, lo, hi}
+            // = 8 * 32 = 256 bytes + 16-byte header.
+            unsigned slotSz = 32, nSlots = 8;
+            unsigned objSz = slotSz * nSlots + 16;
+            VReg sizeV = fn_->newVReg();
+            emit({MOpcode::MovRI,
+                  {MOperand::defVReg(sizeV),
+                   MOperand::immediate(static_cast<std::int64_t>(objSz))}});
+            VReg obj = emitMalloc(sizeV);
+            if (failed_) return kInvalidVReg;
+            // Zero out slot keys
+            VReg zero = fn_->newVReg();
+            emit({MOpcode::MovRI, {MOperand::defVReg(zero), MOperand::immediate(0)}});
+            for (unsigned i = 0; i < nSlots; ++i) {
+                MInst st{MOpcode::StoreInd,
+                         {MOperand::useVReg(obj),
+                          MOperand::immediate(static_cast<std::int64_t>(i * slotSz)),
+                          MOperand::useVReg(zero)}};
+                st.width = 8; st.isSigned = false; emit(st);
+            }
+            // Header: count=0, cap=nSlots
+            MInst stC{MOpcode::StoreInd,
+                      {MOperand::useVReg(obj),
+                       MOperand::immediate(static_cast<std::int64_t>(slotSz * nSlots)),
+                       MOperand::useVReg(zero)}};
+            stC.width = 8; stC.isSigned = false; emit(stC);
+            VReg capV = fn_->newVReg();
+            emit({MOpcode::MovRI,
+                  {MOperand::defVReg(capV),
+                   MOperand::immediate(static_cast<std::int64_t>(nSlots))}});
+            MInst stCap{MOpcode::StoreInd,
+                        {MOperand::useVReg(obj),
+                         MOperand::immediate(static_cast<std::int64_t>(slotSz * nSlots + 8)),
+                         MOperand::useVReg(capV)}};
+            stCap.width = 8; stCap.isSigned = false; emit(stCap);
+            // Insert each property into a slot
+            unsigned slotIdx = 0;
+            for (auto& prop : ol.properties) {
+                auto* op = static_cast<AST::ObjectProperty*>(prop.get());
+                if (!op || slotIdx >= nSlots) continue;
+                Types::TypeRef vt = op->value ? concreteTypeOf(op->value.get()) : nullptr;
+                std::int64_t tag = 0;
+                if (vt) {
+                    if (vt->kind == Types::Kind::Int) tag = 1;
+                    else if (vt->kind == Types::Kind::Float) tag = 2;
+                    else if (vt->kind == Types::Kind::Text) tag = 3;
+                    else if (vt->kind == Types::Kind::Bool) tag = 4;
+                    else if (vt->kind == Types::Kind::Object) tag = 5;
+                }
+                VReg valReg = selExpr(op->value);
+                if (failed_) return kInvalidVReg;
+                VReg valLo = kInvalidVReg;
+                VReg valHi = fn_->newVReg();
+                emit({MOpcode::MovRI, {MOperand::defVReg(valHi), MOperand::immediate(0)}});
+                if (vt && vt->kind == Types::Kind::Float) {
+                    valLo = fn_->newVReg();
+                    std::uint8_t fw = floatWidthOf(vt) == 4 ? 4u : 8u;
+                    emitFW(MOpcode::FMovToGpr,
+                           {MOperand::defVReg(valLo), MOperand::useVReg(valReg)}, fw);
+                } else {
+                    valLo = valReg;
+                }
+                std::int64_t off = static_cast<std::int64_t>(slotIdx * slotSz);
+                std::string keySym = ".Lobjk." + std::to_string(stringCounter_++);
+                fn_->addStringConstant(keySym, op->key);
+                VReg keyPtr = fn_->newVReg();
+                emit({MOpcode::Lea, {MOperand::defVReg(keyPtr), MOperand::sym(keySym)}});
+                MInst stK{MOpcode::StoreInd,
+                          {MOperand::useVReg(obj), MOperand::immediate(off),
+                           MOperand::useVReg(keyPtr)}};
+                stK.width = 8; stK.isSigned = false; emit(stK);
+                MInst stL{MOpcode::StoreInd,
+                          {MOperand::useVReg(obj), MOperand::immediate(off + 8),
+                           MOperand::useVReg(valLo)}};
+                stL.width = 8; stL.isSigned = false; emit(stL);
+                MInst stH{MOpcode::StoreInd,
+                          {MOperand::useVReg(obj), MOperand::immediate(off + 16),
+                           MOperand::useVReg(valHi)}};
+                stH.width = 8; stH.isSigned = false; emit(stH);
+                VReg tagV = fn_->newVReg();
+                emit({MOpcode::MovRI,
+                      {MOperand::defVReg(tagV), MOperand::immediate(tag)}});
+                MInst stT{MOpcode::StoreInd,
+                          {MOperand::useVReg(obj), MOperand::immediate(off + 24),
+                           MOperand::useVReg(tagV)}};
+                stT.width = 8; stT.isSigned = false; emit(stT);
+                ++slotIdx;
+            }
+            // Store final count
+            VReg cntV = fn_->newVReg();
+            emit({MOpcode::MovRI,
+                  {MOperand::defVReg(cntV),
+                   MOperand::immediate(static_cast<std::int64_t>(slotIdx))}});
+            MInst stCnt{MOpcode::StoreInd,
+                        {MOperand::useVReg(obj),
+                         MOperand::immediate(static_cast<std::int64_t>(slotSz * nSlots)),
+                         MOperand::useVReg(cntV)}};
+            stCnt.width = 8; stCnt.isSigned = false; emit(stCnt);
+            return obj;
+        }
         case AST::NodeType::DereferenceExpr: {
             const auto& d = static_cast<const AST::DereferenceExpr&>(*expr);
             return selDeref(d);
@@ -2789,6 +3029,75 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
                 ElemAddr a = materializeSumConstruct(*st, *v, {});
                 if (failed_) return kInvalidVReg;
                 return materializeAddr(a);
+            }
+            // Object field access: obj.key or obj["key"] -> slot lookup
+            {
+                Types::TypeRef objTy = concreteTypeOf(m.object.get());
+                if (objTy && objTy->kind == Types::Kind::Object) {
+                    VReg objPtr = selExpr(m.object);
+                    if (failed_) return kInvalidVReg;
+                    // Get key string for dot access, or evaluate key expr for index
+                    VReg keyPtr;
+                    if (!m.computed && m.property &&
+                        m.property->nodeType() == AST::NodeType::IdentifierExpr) {
+                        std::string keyStr =
+                            static_cast<const AST::IdentifierExpr&>(*m.property).name;
+                        std::string keySym = ".Lobjk." + std::to_string(stringCounter_++);
+                        fn_->addStringConstant(keySym, keyStr);
+                        keyPtr = fn_->newVReg();
+                        emit({MOpcode::Lea, {MOperand::defVReg(keyPtr), MOperand::sym(keySym)}});
+                    } else if (m.computed && m.property) {
+                        keyPtr = selExpr(m.property);
+                        if (failed_) return kInvalidVReg;
+                    } else {
+                        return kInvalidVReg;
+                    }
+                    // Scan up to 8 slots, each 32 bytes: key=+0, val_lo=+8
+                    VReg result = fn_->newVReg();
+                    emit({MOpcode::MovRI, {MOperand::defVReg(result), MOperand::immediate(0)}});
+                    std::uint32_t foundBlk = fn_->addBlock();
+                    std::uint32_t missBlk = fn_->addBlock();
+                    for (unsigned i = 0; i < 8; ++i) {
+                        std::int64_t off = static_cast<std::int64_t>(i * 32);
+                        VReg slotKey = fn_->newVReg();
+                        MInst ldk{MOpcode::LoadInd,
+                                  {MOperand::defVReg(slotKey), MOperand::useVReg(objPtr),
+                                   MOperand::immediate(off)}};
+                        ldk.width = 8; ldk.isSigned = false; emit(ldk);
+                        emit({MOpcode::Cmp,
+                              {MOperand::useVReg(slotKey), MOperand::useVReg(keyPtr)}});
+                        MInst jcc{MOpcode::Jcc, {MOperand::lbl(foundBlk)}};
+                        jcc.cond = Cond::EQ; emit(jcc);
+                    }
+                    emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
+                    // Found: load val_lo. Re-check which slot matched since Jcc
+                    // doesn't carry the index.
+                    curBlock_ = foundBlk;
+                    for (unsigned i = 0; i < 8; ++i) {
+                        std::int64_t off = static_cast<std::int64_t>(i * 32);
+                        VReg sk = fn_->newVReg();
+                        MInst ld{MOpcode::LoadInd,
+                                 {MOperand::defVReg(sk), MOperand::useVReg(objPtr),
+                                  MOperand::immediate(off)}};
+                        ld.width = 8; ld.isSigned = false; emit(ld);
+                        emit({MOpcode::Cmp,
+                              {MOperand::useVReg(sk), MOperand::useVReg(keyPtr)}});
+                        std::uint32_t loadB = fn_->addBlock();
+                        std::uint32_t skipB = fn_->addBlock();
+                        MInst j2{MOpcode::Jcc, {MOperand::lbl(loadB)}};
+                        j2.cond = Cond::EQ; emit(j2);
+                        emit({MOpcode::Jmp, {MOperand::lbl(skipB)}});
+                        curBlock_ = loadB;
+                        MInst ldv{MOpcode::LoadInd,
+                                  {MOperand::defVReg(result), MOperand::useVReg(objPtr),
+                                   MOperand::immediate(off + 8)}};
+                        ldv.width = 8; ldv.isSigned = false; emit(ldv);
+                        emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
+                        curBlock_ = skipB;
+                    }
+                    curBlock_ = missBlk;
+                    return result;
+                }
             }
             return selMemberLoad(m);
         }
@@ -5056,8 +5365,14 @@ VReg InstructionSelector::selCast(const AST::CastExpr& cast) {
     // Pointer/integer reinterpretation: values are already 64-bit; nothing to do.
     // A function value (lambda / function pointer) is likewise a 64-bit address,
     // so casting it to/from an integer or pointer preserves the bit pattern.
-    const bool toPtr = (to && to->isPointerLike()) || (to && to->kind == Types::Kind::Function);
-    const bool fromPtr = (from && from->isPointerLike()) || (from && from->kind == Types::Kind::Function);
+    const bool toPtr = (to && to->isPointerLike()) ||
+                        (to && (to->kind == Types::Kind::Function ||
+                                to->kind == Types::Kind::Closure ||
+                                to->kind == Types::Kind::Object));
+    const bool fromPtr = (from && from->isPointerLike()) ||
+                          (from && (from->kind == Types::Kind::Function ||
+                                    from->kind == Types::Kind::Closure ||
+                                    from->kind == Types::Kind::Object));
     if (toPtr || fromPtr) {
         // int<->ptr, ptr<->ptr, fn<->int, fn<->ptr: the 64-bit value is preserved.
         return v;
@@ -7253,8 +7568,13 @@ VReg InstructionSelector::selCall(const AST::FunctionCallExpr& call) {
         const std::string& cn =
             static_cast<const AST::IdentifierExpr&>(*call.callee).name;
         if (lookupLocal(cn, li) && li.type) {
-            if (li.type->kind == Types::Kind::Function ||
-                li.type->kind == Types::Kind::Closure) {
+            Types::TypeRef vt = li.type;
+            if (vt->kind == Types::Kind::Closure) vt = vt->element;
+            if (vt->kind == Types::Kind::Pointer && vt->element &&
+                vt->element->kind == Types::Kind::Function) {
+                vt = vt->element;
+            }
+            if (vt->kind == Types::Kind::Function) {
                 isFnVarCall = true;
                 if (li.type->kind == Types::Kind::Closure) {
                     closureEnv = selExpr(call.callee);

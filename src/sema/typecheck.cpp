@@ -1031,6 +1031,14 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
                                                       : resolveTypeSpelling(a->returnType, raw);
             return record(raw, rt);
         }
+        case AST::NodeType::ObjectLiteral: {
+            auto* ol = static_cast<AST::ObjectLiteral*>(raw);
+            for (auto& prop : ol->properties) {
+                if (auto* op = static_cast<AST::ObjectProperty*>(prop.get()))
+                    checkExpr(op->value);
+            }
+            return record(raw, types_.objectType());
+        }
         case AST::NodeType::StructInstantiation: {
             auto* si = static_cast<AST::StructInstantiation*>(raw);
             for (const auto& fv : si->fieldValues) checkExpr(fv.value);
@@ -1082,8 +1090,9 @@ Types::TypeRef Checker::checkIdentifier(AST::IdentifierExpr* node) {
     if (auto ev = enumConstants_.find(node->name); ev != enumConstants_.end()) {
         return record(node, ev->second);
     }
-    if (functionTable_.find(node->name) != functionTable_.end()) {
-        return record(node, types_.errorType());
+    if (auto fit = functionTable_.find(node->name); fit != functionTable_.end()) {
+        return record(node, types_.functionType(fit->second.paramTypes,
+                                                fit->second.returnType));
     }
     if (!alreadyErrored(node)) {
         emit("E2002", "unresolved name '" + node->name + "'", node,
@@ -1478,6 +1487,11 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
     if (calleeNode && calleeNode->nodeType() == AST::NodeType::IdentifierExpr) {
         Types::TypeRef vt = lookupLocal(name);
         if (vt && vt->kind == Types::Kind::Closure) vt = vt->element;
+        // Pointer-to-function: unwrap the pointer to get the callable signature.
+        if (vt && vt->kind == Types::Kind::Pointer && vt->element &&
+            vt->element->kind == Types::Kind::Function) {
+            vt = vt->element;
+        }
         if (vt && vt->kind == Types::Kind::Function) {
             if (node->arguments.size() != vt->params.size()) {
                 emit("E2008", "wrong number of arguments to '" + name +
@@ -2269,6 +2283,9 @@ Types::TypeRef Checker::checkMember(AST::MemberAccessExpr* node) {
             }
         }
     }
+    if (objType && objType->kind == Types::Kind::Object && !node->computed) {
+        return record(node, types_.objectType());
+    }
     return record(node, types_.errorType());
 }
 
@@ -2286,6 +2303,9 @@ Types::TypeRef Checker::checkIndex(AST::MemberAccessExpr* node) {
         }
         if (base->kind == Types::Kind::Text) {
             return record(node, types_.intType(8, false));
+        }
+        if (base->kind == Types::Kind::Object) {
+            return record(node, types_.objectType());
         }
         if (base->kind == Types::Kind::Slice && base->element) {
             return record(node, base->element);

@@ -14,6 +14,7 @@ std::shared_ptr<AST::StringLiteral> makeString(const std::string& decoded);
 
 AST::NodePtr ecxParseArrayLiteral(Parser& parser);
 AST::NodePtr ecxParseStructInstantiation(Parser& parser, const Token& nameTok);
+AST::NodePtr ecxParseObjectLiteral(Parser& parser);
 
 namespace {
 bool g_allowStructLiteral = true;
@@ -238,6 +239,9 @@ AST::NodePtr Parser::parsePrimary() {
             expect(TokenType::RParen, "E1300", "')' to close grouping");
             match(TokenType::RParen);
             return inner;
+        }
+        case TokenType::LBrace: {
+            return ecxParseObjectLiteral(*this);
         }
         case TokenType::LBracket: {
             return ecxParseArrayLiteral(*this);
