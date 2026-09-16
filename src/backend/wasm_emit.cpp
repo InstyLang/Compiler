@@ -326,7 +326,7 @@ bool boundaryType(Types::TypeRef type, ValType& out, bool& isVoid, bool& isSigne
             isSigned = false;
             return true;
         default:
-            why = "aggregate and slice types are not supported on wasm yet";
+            why = "this type cannot be used at a wasm ABI boundary";
             return false;
     }
 }
@@ -702,6 +702,9 @@ bool condToWasmOp(Cond cond, Op& out) {
         case Cond::ULE: out = Op::I64LeU;  return true;
         case Cond::UGT: out = Op::I64GtU;  return true;
         case Cond::UGE: out = Op::I64GeU;  return true;
+        case Cond::P:
+        case Cond::NP:
+            return false;
     }
     return false;
 }
@@ -722,6 +725,9 @@ bool floatCondToWasmOp(Cond cond, std::uint8_t width, Op& out) {
         case Cond::UGT: out = single ? Op::F32Gt : Op::F64Gt; return true;
         case Cond::GE:
         case Cond::UGE: out = single ? Op::F32Ge : Op::F64Ge; return true;
+        case Cond::P:
+        case Cond::NP:
+            return false;
     }
     return false;
 }

@@ -633,6 +633,86 @@ if(INSTY_BUILD_TESTS)
                 -DNAME=float_layout
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_build_run.cmake
         )
+        add_test(
+            NAME insty_e2e_scratch_f16
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scratch_f16.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/scratch_f16_test.exe
+                -DEXPECT=80
+                -DNAME=scratch_f16
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_build_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_scratch_fconst
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scratch_fconst.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/scratch_fconst_test.exe
+                -DEXPECT=80
+                -DNAME=scratch_fconst
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_build_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_nan_compare
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/nan_compare.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/nan_compare_test.exe
+                -DEXPECT=42
+                -DNAME=nan_compare
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_build_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_u64_to_float
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/u64_to_float.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/u64_to_float_test.exe
+                -DEXPECT=42
+                -DNAME=u64_to_float
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_build_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_literal_overflow
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/literal_overflow.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/literal_overflow.exe
+                -DMATCH=cannot initialize
+                -DNAME=literal_overflow
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_int_to_ptr
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/int_to_ptr.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/int_to_ptr.exe
+                -DMATCH=cannot initialize
+                -DNAME=int_to_ptr
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_mixed_sign
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mixed_sign.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/mixed_sign.exe
+                -DMATCH=mixed signed/unsigned
+                -DNAME=mixed_sign
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_hex_empty
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hex_empty.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/hex_empty.exe
+                -DMATCH=malformed hex literal
+                -DNAME=hex_empty
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
         # A C-style enum is laid out as its declared underlying type. Checks the
         # sizes against measured field/array strides, and -- because narrowing an
         # enum narrows its loads and stores -- that values survive, including
@@ -805,6 +885,86 @@ if(INSTY_BUILD_TESTS)
                 -DEXPECT=42
                 -DNAME=hash_consistency
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_scratch_f16
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scratch_f16.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/scratch_f16
+                -DEXPECT=80
+                -DNAME=scratch_f16
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_scratch_fconst
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scratch_fconst.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/scratch_fconst
+                -DEXPECT=80
+                -DNAME=scratch_fconst
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_nan_compare
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/nan_compare.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/nan_compare
+                -DEXPECT=42
+                -DNAME=nan_compare
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_u64_to_float
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/u64_to_float.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/u64_to_float
+                -DEXPECT=42
+                -DNAME=u64_to_float
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_run.cmake
+        )
+        add_test(
+            NAME insty_e2e_literal_overflow
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/literal_overflow.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/literal_overflow
+                -DMATCH=cannot initialize
+                -DNAME=literal_overflow
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_int_to_ptr
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/int_to_ptr.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/int_to_ptr
+                -DMATCH=cannot initialize
+                -DNAME=int_to_ptr
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_mixed_sign
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mixed_sign.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/mixed_sign
+                -DMATCH=mixed signed/unsigned
+                -DNAME=mixed_sign
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
+        )
+        add_test(
+            NAME insty_e2e_hex_empty
+            COMMAND ${CMAKE_COMMAND}
+                -DINSTY=$<TARGET_FILE:insty>
+                -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hex_empty.ins
+                -DEXE=${CMAKE_CURRENT_BINARY_DIR}/hex_empty
+                -DMATCH=malformed hex literal
+                -DNAME=hex_empty
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/backend_expect_fail.cmake
         )
     endif()
 

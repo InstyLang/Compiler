@@ -201,7 +201,9 @@ enum class MOpcode : std::uint16_t {
 // Condition codes. The signed forms (LT/LE/GT/GE) lower to jl/jle/jg/jge and
 // setl/setle/setg/setge; the unsigned forms (ULT/ULE/UGT/UGE) lower to
 // jb/jbe/ja/jae and setb/setbe/seta/setae. EQ/NE are sign-agnostic.
-enum class Cond : std::uint8_t { EQ, NE, LT, LE, GT, GE, ULT, ULE, UGT, UGE };
+enum class Cond : std::uint8_t {
+    EQ, NE, LT, LE, GT, GE, ULT, ULE, UGT, UGE, P, NP
+};
 
 // Inverts a condition (true <-> false), used to branch on the negated test.
 inline Cond invertCond(Cond c) {
@@ -216,6 +218,8 @@ inline Cond invertCond(Cond c) {
         case Cond::ULE: return Cond::UGT;
         case Cond::UGT: return Cond::ULE;
         case Cond::UGE: return Cond::ULT;
+        case Cond::P:   return Cond::NP;
+        case Cond::NP:  return Cond::P;
     }
     return Cond::EQ;
 }

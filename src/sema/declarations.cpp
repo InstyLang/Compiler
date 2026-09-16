@@ -278,6 +278,9 @@ void Checker::checkClassMethod(const std::string& className, Types::TypeRef clas
                          ? types_.voidType()
                          : resolveTypeSpelling(method.returnType, nullptr);
     inUnsafe_ = false;
+    if (const auto* a = findAttr(method.attributes, "unsafe")) {
+        inUnsafe_ = (a->value == "on" || a->value.empty());
+    }
 
     pushScope();
     declareLocal("this", classPtr, nullptr);

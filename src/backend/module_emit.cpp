@@ -46,6 +46,13 @@ void emitGlobals(const Sema::SemaResult& sema, const AST::ProgramRoot* program,
 
     for (const auto& g : sema.globals) {
         if (!g.type || g.type->isError()) continue;
+        // An imported global is defined by the module that declared it. Referencing
+        // it here as an external symbol is what lets the linker bind the two; a
+        // second definition would be a duplicate-symbol error.
+        if (g.isImported) {
+            code.referenceExternal(g.name);
+            continue;
+        }
         SizeAlign sa = scalarSizeAlign(g.type);
         if (sa.size == 0) sa.size = 1;
         const SymbolBinding binding =

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include <backend/abi.hpp>
 #include <backend/coff_writer.hpp>
@@ -47,6 +48,16 @@ static void testAbi() {
           "SysV allocatable excludes RSP/RBP");
     check(notAllocatable(win, PhysReg::RSP) && notAllocatable(win, PhysReg::RBP),
           "Win64 allocatable excludes RSP/RBP");
+    check(notAllocatable(sysv, PhysReg::R10) && notAllocatable(sysv, PhysReg::R11),
+          "SysV allocatable excludes R10/R11 scratch");
+    check(notAllocatable(win, PhysReg::R10) && notAllocatable(win, PhysReg::R11),
+          "Win64 allocatable excludes R10/R11 scratch");
+    for (const auto& abi : {sysv, win}) {
+        bool scratchExcluded = true;
+        for (auto x : abi.xmmAllocatable)
+            if (x == XmmReg::XMM4 || x == XmmReg::XMM5) scratchExcluded = false;
+        check(scratchExcluded, "XMM allocatable excludes XMM4/XMM5 lowering scratch");
+    }
 
     check(abiForTriple("x86_64-pc-windows-msvc") == Abi::Win64,
           "triple windows -> Win64");
@@ -240,11 +251,270 @@ static void testMultiBlockLiveness() {
           "loop-live vregs get distinct registers (no clobber across the loop)");
 }
 
+// Execute the small MIR subset used below against the allocation's actual
+// register/slot locations. Calls destroy volatile registers, and stores record
+// observable values. This catches lost values rather than just checking that
+// the allocator chose a particular preferred register. Spill reload/store
+// semantics are modeled here; encoding and real spill lowering remain covered
+// by the separate lowering/integration tests.
+static std::vector<std::int64_t> executeAllocated(
+    const MFunction& fn, const Allocation& alloc, const AbiInfo& abi,
+    int observeCallArg = 0) {
+    std::int64_t gp[16] = {}, xmm[16] = {};
+    std::vector<std::int64_t> slots(fn.frameSlots().size(), 0), observed;
+    auto location = [&](const MOperand& op) -> std::int64_t& {
+        if (op.kind == OperandKind::VirtReg) {
+            if (alloc.vregToSlot[op.vreg] != kInvalidVReg)
+                return slots[alloc.vregToSlot[op.vreg]];
+            if (fn.vregClass(op.vreg) == RegClass::XMM)
+                return xmm[xmmIndex(alloc.vregToXmm[op.vreg])];
+            return gp[regIndex(alloc.vregToPhys[op.vreg])];
+        }
+        if (op.xmm != XmmReg::None) return xmm[xmmIndex(op.xmm)];
+        return gp[regIndex(op.phys)];
+    };
+    auto value = [&](const MOperand& op) -> std::int64_t {
+        return op.kind == OperandKind::Imm ? op.imm : location(op);
+    };
+    std::size_t b = 0, i = 0;
+    bool equal = false;
+    for (int steps = 0; steps < 1000 && b < fn.blocks().size(); ++steps) {
+        if (i == fn.blocks()[b].insts.size()) { ++b; i = 0; continue; }
+        const auto& inst = fn.blocks()[b].insts[i++];
+        const auto& ops = inst.operands;
+        switch (inst.op) {
+            case MOpcode::MovRI: case MOpcode::MovRR:
+            case MOpcode::FConst: case MOpcode::FMovRR:
+                location(ops[0]) = value(ops[1]); break;
+            case MOpcode::Add:
+                location(ops[0]) += value(ops[1]); break;
+            case MOpcode::Cmp:
+                equal = value(ops[0]) == value(ops[1]); break;
+            case MOpcode::Store: case MOpcode::FStore:
+                slots[ops[0].frameSlot] = value(ops[1]);
+                observed.push_back(value(ops[1])); break;
+            case MOpcode::Call: case MOpcode::CallImport: case MOpcode::CallIndirect:
+                if (observeCallArg == 1) observed.push_back(gp[regIndex(abi.intArgRegs[0])]);
+                if (observeCallArg == 2) observed.push_back(xmm[xmmIndex(abi.xmmArgRegs[0])]);
+                for (auto r : abi.callerSaved) gp[regIndex(r)] = -999;
+                for (auto r : abi.xmmCallerSaved) xmm[xmmIndex(r)] = -999;
+                break;
+            case MOpcode::Jcc:
+                check(inst.cond == Cond::EQ || inst.cond == Cond::NE,
+                      "MIR test executor supports branch condition");
+                if ((inst.cond == Cond::EQ) == equal) { b = ops[0].label; i = 0; }
+                break;
+            case MOpcode::Jmp: b = ops[0].label; i = 0; break;
+            case MOpcode::Ret: return observed;
+            default:
+                check(false, "MIR test executor supports opcode"); return observed;
+        }
+        // Non-call clobbers model scratch writes independently of operands.
+        for (auto r : inst.clobbers) gp[regIndex(r)] = -999;
+    }
+    check(false, "allocated MIR execution terminates with Ret");
+    return observed;
+}
+
+static void testConditionalBackedgeLiveness() {
+    // The only backedge is the Jcc before a final Jmp. carried's last textual
+    // use precedes temporary's definition, but its next dynamic use follows it.
+    MFunction fn("conditional_backedge", Abi::SystemV);
+    const auto entry = fn.addBlock("entry"), header = fn.addBlock("header");
+    const auto body = fn.addBlock("body"), exit = fn.addBlock("exit");
+    const auto carried = fn.newVReg(), count = fn.newVReg(), temporary = fn.newVReg();
+    const auto output = fn.addFrameSlot(8, 8, false);
+    fn.block(entry).insts = {
+        {MOpcode::MovRI, {MOperand::defVReg(carried), MOperand::immediate(42)}},
+        {MOpcode::MovRI, {MOperand::defVReg(count), MOperand::immediate(2)}},
+        {MOpcode::Jmp, {MOperand::lbl(header)}}};
+    fn.block(header).insts = {
+        {MOpcode::Store, {MOperand::slot(output), MOperand::useVReg(carried)}},
+        {MOpcode::Jmp, {MOperand::lbl(body)}}};
+    MInst backedge{MOpcode::Jcc, {MOperand::lbl(header)}};
+    backedge.cond = Cond::NE;
+    fn.block(body).insts = {
+        {MOpcode::MovRI, {MOperand::defVReg(temporary), MOperand::immediate(99)}},
+        {MOpcode::Store, {MOperand::slot(output), MOperand::useVReg(temporary)}},
+        {MOpcode::Add, {MOperand::useDefVReg(count), MOperand::immediate(-1)}},
+        {MOpcode::Cmp, {MOperand::useVReg(count), MOperand::immediate(0)}},
+        backedge, {MOpcode::Jmp, {MOperand::lbl(exit)}}};
+    fn.block(exit).insts = {{MOpcode::Ret, {}}};
+    auto abi = makeAbi(Abi::SystemV);
+    abi.allocatable = {PhysReg::RBX, PhysReg::R12, PhysReg::R13};
+    LinearScanAllocator ra(abi);
+    bool spansBackedge = false;
+    for (const auto& iv : ra.computeIntervals(fn))
+        if (iv.vreg == carried) spansBackedge = iv.end >= 10;
+    check(spansBackedge, "Jcc;Jmp keeps carried value live through backedge");
+    const auto alloc = ra.run(fn);
+    check(!alloc.anySpilled, "conditional-backedge test has enough registers");
+    check(executeAllocated(fn, alloc, abi) == std::vector<std::int64_t>({42, 99, 42, 99}),
+          "both loop iterations observe carried value despite body register writes");
+}
+
+static void testClobberPressure() {
+    // One register: old dies before the clobber, incoming survives it. The
+    // clobber makes that register illegal for incoming even under pressure.
+    // With a non-clobbering version, a shorter incoming interval should still
+    // be able to evict a longer old one (exercise the successful steal path).
+    for (bool clobber : {false, true}) {
+        MFunction fn("clobber_pressure", Abi::SystemV);
+        const auto b = fn.addBlock("entry");
+        const auto old = fn.newVReg(), incoming = fn.newVReg();
+        const auto output = fn.addFrameSlot(8, 8, false);
+        MInst scratch{MOpcode::MovRI,
+            {MOperand::defPhys(PhysReg::R10), MOperand::immediate(0)}};
+        if (clobber) scratch.clobbers = {PhysReg::RAX};
+        const auto first = clobber ? old : incoming;
+        const auto last = clobber ? incoming : old;
+        fn.block(b).insts = {
+            {MOpcode::MovRI, {MOperand::defVReg(old), MOperand::immediate(17)}},
+            {MOpcode::MovRI, {MOperand::defVReg(incoming), MOperand::immediate(25)}},
+            {MOpcode::Store, {MOperand::slot(output), MOperand::useVReg(first)}},
+            scratch,
+            {MOpcode::Store, {MOperand::slot(output), MOperand::useVReg(last)}},
+            // Kill the unrelated implicit return-register live-in.
+            {MOpcode::MovRI, {MOperand::defPhys(PhysReg::RAX), MOperand::immediate(0)}},
+            {MOpcode::Ret, {}}};
+        auto abi = makeAbi(Abi::SystemV);
+        abi.allocatable = {PhysReg::RAX};
+        const auto alloc = LinearScanAllocator(abi).run(fn);
+        const auto spilled = clobber ? incoming : old;
+        check(alloc.anySpilled && alloc.vregToSlot[spilled] != kInvalidVReg,
+              clobber ? "clobber collision forces incoming GP value to spill"
+                      : "shorter GP value evicts longer active value");
+        check(alloc.vregToPhys[clobber ? old : incoming] == PhysReg::RAX,
+              "non-colliding GP interval retains the sole register");
+        check(executeAllocated(fn, alloc, abi) == (clobber
+                  ? std::vector<std::int64_t>({17, 25})
+                  : std::vector<std::int64_t>({25, 17})),
+              "GP values survive forced spilling and scratch clobbers");
+    }
+}
+
+static MInst testCall(MFunction& fn, MOpcode op, const AbiInfo& abi) {
+    MInst call{op, {MOperand::sym("callee")}};
+    if (op == MOpcode::CallImport) call.operands.push_back(MOperand::sym("test.dll"));
+    if (op == MOpcode::CallIndirect)
+        call.operands = {MOperand::slot(fn.addFrameSlot(8, 8, false))};
+    call.clobbers = abi.callerSaved;
+    return call;
+}
+
+static void testXmmClobberPressure() {
+    for (bool collision : {false, true}) {
+        auto abi = makeAbi(Abi::SystemV);
+        abi.xmmAllocatable = {XmmReg::XMM8};
+        MFunction fn("xmm_pressure", Abi::SystemV);
+        const auto b = fn.addBlock("entry");
+        const auto old = fn.newVReg(RegClass::XMM), incoming = fn.newVReg(RegClass::XMM);
+        const auto output = fn.addFrameSlot(8, 8, false);
+        fn.block(b).insts = {
+            {MOpcode::FConst, {MOperand::defVReg(old), MOperand::immediate(17)}},
+            {MOpcode::FConst, {MOperand::defVReg(incoming), MOperand::immediate(25)}},
+            {MOpcode::FStore, {MOperand::slot(output), MOperand::useVReg(collision ? old : incoming)}},
+            {MOpcode::FConst, {MOperand::defPhysXmm(collision ? XmmReg::XMM8 : XmmReg::XMM9),
+                              MOperand::immediate(-999)}},
+            {MOpcode::FStore, {MOperand::slot(output), MOperand::useVReg(collision ? incoming : old)}},
+            {MOpcode::Ret, {}}};
+        const auto alloc = LinearScanAllocator(abi).run(fn);
+        check(alloc.vregToSlot[collision ? incoming : old] != kInvalidVReg,
+              collision ? "fixed XMM write forces colliding incoming interval to spill"
+                        : "shorter XMM interval evicts longer active interval");
+        check(alloc.vregToXmm[collision ? old : incoming] == XmmReg::XMM8,
+              "non-colliding XMM interval retains the sole register");
+        check(executeAllocated(fn, alloc, abi) == (collision
+                  ? std::vector<std::int64_t>({17, 25})
+                  : std::vector<std::int64_t>({25, 17})),
+              "XMM values survive pressure and fixed-register writes");
+    }
+}
+
+static void testXmmCallLiveness() {
+    for (auto convention : {Abi::SystemV, Abi::Win64}) {
+        for (auto op : {MOpcode::Call, MOpcode::CallImport, MOpcode::CallIndirect}) {
+            const auto abi = makeAbi(convention);
+            MFunction fn("xmm_call_live", convention);
+            const auto b = fn.addBlock("entry");
+            const auto x = fn.newVReg(RegClass::XMM);
+            const auto y = fn.newVReg(RegClass::XMM);
+            const auto output = fn.addFrameSlot(8, 8, false);
+            fn.block(b).insts = {
+                {MOpcode::FConst, {MOperand::defVReg(x), MOperand::immediate(0x3ff0000000000000LL)}},
+                {MOpcode::FConst, {MOperand::defVReg(y), MOperand::immediate(0x4000000000000000LL)}},
+                testCall(fn, op, abi),
+                {MOpcode::FStore, {MOperand::slot(output), MOperand::useVReg(x)}},
+                {MOpcode::FStore, {MOperand::slot(output), MOperand::useVReg(y)}},
+                {MOpcode::Ret, {}}};
+            std::printf("XMM call case: %s / %s\n",
+                convention == Abi::SystemV ? "SysV" : "Win64",
+                op == MOpcode::Call ? "direct" : op == MOpcode::CallImport ? "import" : "indirect");
+            const auto alloc = LinearScanAllocator(abi).run(fn);
+            if (convention == Abi::SystemV) {
+                check(alloc.vregToSlot[x] != kInvalidVReg && alloc.vregToSlot[y] != kInvalidVReg,
+                      "SysV live-across-call floats both spill");
+            } else {
+                check(!alloc.anySpilled && alloc.vregToXmm[x] != alloc.vregToXmm[y],
+                      "Win64 floats use distinct preserved XMM registers");
+            }
+            check(executeAllocated(fn, alloc, abi) == std::vector<std::int64_t>(
+                      {0x3ff0000000000000LL, 0x4000000000000000LL}),
+                  "both floating values survive volatile XMM destruction at call");
+        }
+    }
+}
+
+static void testFixedArgumentLiveness() {
+    for (bool floating : {false, true}) {
+        for (bool acrossBlock : {false, true}) {
+            auto abi = makeAbi(Abi::SystemV);
+            abi.allocatable = {PhysReg::RDI};
+            abi.xmmAllocatable = {XmmReg::XMM0};
+            MFunction fn("fixed_argument", Abi::SystemV);
+            const auto entry = fn.addBlock("entry");
+            const auto consume = acrossBlock ? fn.addBlock("consume") : entry;
+            const auto v = fn.newVReg(floating ? RegClass::XMM : RegClass::GPR);
+            const auto output = fn.addFrameSlot(8, 8, false);
+            const auto def = floating ? MOperand::defPhysXmm(XmmReg::XMM0)
+                                      : MOperand::defPhys(PhysReg::RDI);
+            const auto use = floating ? MOperand::usePhysXmm(XmmReg::XMM0)
+                                      : MOperand::usePhys(PhysReg::RDI);
+            const auto mov = floating ? MOpcode::FConst : MOpcode::MovRI;
+            const auto store = floating ? MOpcode::FStore : MOpcode::Store;
+            fn.block(entry).insts = {
+                {mov, {def, MOperand::immediate(42)}},
+                {mov, {MOperand::defVReg(v), MOperand::immediate(99)}},
+                {store, {MOperand::slot(output), MOperand::useVReg(v)}}};
+            if (acrossBlock)
+                fn.block(entry).insts.push_back({MOpcode::Jmp, {MOperand::lbl(consume)}});
+            auto& tail = fn.block(consume).insts;
+            // Cross-block case tests an explicit fixed use; same-block case
+            // relies solely on the call's implicit ABI consumption.
+            if (acrossBlock) tail.push_back({store, {MOperand::slot(output), use}});
+            tail.push_back(testCall(fn, MOpcode::Call, abi));
+            tail.push_back({MOpcode::Ret, {}});
+            const auto alloc = LinearScanAllocator(abi).run(fn);
+            check(alloc.vregToSlot[v] != kInvalidVReg,
+                  "temporary wholly inside fixed argument lifetime spills");
+            const auto expected = acrossBlock ? std::vector<std::int64_t>({99, 42, 42})
+                                              : std::vector<std::int64_t>({99, 42});
+            check(executeAllocated(fn, alloc, abi, floating ? 2 : 1) == expected,
+                  "fixed GP/XMM argument survives intervening temporary, including CFG edge");
+        }
+    }
+}
+
 int main() {
     testAbi();
     testIntervalsAndAlloc();
     testSpilling();
     testMultiBlockLiveness();
+    testConditionalBackedgeLiveness();
+    testClobberPressure();
+    testXmmClobberPressure();
+    testXmmCallLiveness();
+    testFixedArgumentLiveness();
     testEndToEndLowering();
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "PASSED" : "FAILED",
                 g_failures);

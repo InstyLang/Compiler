@@ -30,7 +30,8 @@ public:
              const std::vector<EnumInfo>& importedEnums,
              const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
              const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
-             const std::vector<SumTypeInfo>& importedSumTypes = {});
+             const std::vector<SumTypeInfo>& importedSumTypes = {},
+             const std::vector<GlobalInfo>& importedGlobals = {});
 
     void declarePrepass(const std::shared_ptr<AST::ProgramRoot>& program);
     void declareStruct(AST::StructDeclaration* node);
@@ -100,12 +101,14 @@ public:
     bool isFormattable(Types::TypeRef t);
 
     Types::TypeRef resolveTypeSpelling(const std::string& spelling, const AST::ExprAST* at);
-    bool isAssignable(Types::TypeRef target, Types::TypeRef value, bool valueIsLiteral);
+    bool isAssignable(Types::TypeRef target, Types::TypeRef value,
+                      const AST::NodePtr& valueNode);
     bool isSliceInitializer(Types::TypeRef target, Types::TypeRef value,
                             const AST::NodePtr& valueNode);
     Types::TypeRef enumUnderlying(Types::TypeRef t) const;
     const FunctionInfo* findFunctionByMangled(const std::string& mangled) const;
-    Types::TypeRef arithResult(Types::TypeRef a, Types::TypeRef b);
+    Types::TypeRef arithResult(Types::TypeRef a, Types::TypeRef b,
+                               const AST::ExprAST* at);
     bool isLValue(const AST::NodePtr& node);
     bool blockReturns(const AST::NodeList& body);
 
@@ -116,6 +119,8 @@ public:
 
     Types::TypeRef record(const AST::ExprAST* node, Types::TypeRef type);
     bool isIntLiteral(const AST::NodePtr& node) const;
+    bool foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
+                        bool& ok) const;
 
     static ErrorReporting::SourceLocation locOf(const AST::ExprAST* node);
     void emit(const std::string& code, const std::string& message,

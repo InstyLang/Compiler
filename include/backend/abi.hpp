@@ -59,8 +59,8 @@ struct AbiInfo {
     unsigned stackAlignment = 16;
 
     // Convenience: the registers the allocator may freely assign to virtual
-    // registers (callee-saved + caller-saved, excluding RSP/RBP which the frame
-    // reserves). Computed by makeAbi().
+    // registers (callee-saved + caller-saved, excluding RSP/RBP and the
+    // lowering scratch pair R10/R11). Computed by makeAbi().
     std::vector<PhysReg> allocatable;
 
     // XMM registers the allocator may assign (caller-saved + callee-saved).

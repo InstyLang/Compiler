@@ -24,9 +24,8 @@ void forEachOperand(const MFunction& fn, Fn&& visit) {
     }
 }
 
-// Successors of a block, derived from its terminator. `Jmp` goes only to its
-// label; `Jcc` goes to its label or falls through to the next block; `Ret` has
-// none; any other final instruction falls through to the next block.
+// Collect every reachable branch in the terminator sequence. In particular,
+// selection emits Jcc taken; Jmp other, not just a single final terminator.
 std::vector<std::uint32_t> successorsOf(const MFunction& fn, std::uint32_t bi) {
     std::vector<std::uint32_t> succ;
     const auto& blocks = fn.blocks();
@@ -34,26 +33,63 @@ std::vector<std::uint32_t> successorsOf(const MFunction& fn, std::uint32_t bi) {
     const std::uint32_t fallthrough = bi + 1;
     const bool hasFallthrough = fallthrough < blocks.size();
 
-    if (bb.insts.empty()) {
-        if (hasFallthrough) succ.push_back(fallthrough);
-        return succ;
+    for (const auto& inst : bb.insts) {
+        if (inst.op == MOpcode::Jcc || inst.op == MOpcode::Jmp) {
+            const auto target = inst.operands[0].label;
+            if (std::find(succ.begin(), succ.end(), target) == succ.end())
+                succ.push_back(target);
+        }
+        if (inst.op == MOpcode::Jmp || inst.op == MOpcode::Ret) return succ;
     }
-    const MInst& term = bb.insts.back();
-    switch (term.op) {
-        case MOpcode::Jmp:
-            succ.push_back(term.operands[0].label);
-            break;
-        case MOpcode::Jcc:
-            succ.push_back(term.operands[0].label);
-            if (hasFallthrough) succ.push_back(fallthrough);
-            break;
-        case MOpcode::Ret:
-            break;  // no successors
-        default:
-            if (hasFallthrough) succ.push_back(fallthrough);
-            break;
-    }
+    if (hasFallthrough &&
+        std::find(succ.begin(), succ.end(), fallthrough) == succ.end())
+        succ.push_back(fallthrough);
     return succ;
+}
+
+bool isCall(MOpcode op) {
+    return op == MOpcode::Call || op == MOpcode::CallImport ||
+           op == MOpcode::CallIndirect;
+}
+
+// Low 16 bits are GP, high 16 bits XMM. Explicit roles describe fixed values,
+// while clobbers kill the previous value and reserve the instruction itself.
+struct FixedRegisters {
+    std::uint32_t uses = 0;
+    std::uint32_t defs = 0;
+};
+
+FixedRegisters fixedRegisters(const MInst& inst, const AbiInfo& abi) {
+    FixedRegisters fixed;
+    for (const auto& op : inst.operands) {
+        if (op.kind != OperandKind::PhysReg) continue;
+        std::uint32_t bits = 0;
+        if (op.phys != PhysReg::None) bits |= 1u << regIndex(op.phys);
+        if (op.xmm != XmmReg::None) bits |= 1u << (16 + xmmIndex(op.xmm));
+        if (op.role != OperandRole::Def) fixed.uses |= bits;
+        if (op.role != OperandRole::Use) fixed.defs |= bits;
+    }
+    for (PhysReg r : inst.clobbers)
+        if (r != PhysReg::None) fixed.defs |= 1u << regIndex(r);
+    if (isCall(inst.op)) {
+        // MIR calls do not list the arguments they actually consume. Reserve
+        // all ABI argument registers from their reaching definitions (or entry)
+        // to the call. This may over-reserve unused args, but protects argument
+        // marshalling even when virtual temporaries die before the call itself.
+        for (PhysReg r : abi.intArgRegs) fixed.uses |= 1u << regIndex(r);
+        for (XmmReg r : abi.xmmArgRegs) fixed.uses |= 1u << (16 + xmmIndex(r));
+        for (XmmReg r : abi.xmmCallerSaved) fixed.defs |= 1u << (16 + xmmIndex(r));
+    }
+    if (inst.op == MOpcode::Ret) {
+        fixed.uses |= 1u << regIndex(abi.intReturnReg);
+        fixed.uses |= 1u << (16 + xmmIndex(abi.xmmReturnReg));
+    }
+    // Limits: roles must describe real reads/writes; opaque asm/syscall inputs
+    // must be supplied as operands. Calls use the function ABI because MIR has
+    // no per-call ABI descriptor. Return type is absent too, so Ret uses both
+    // scalar return registers conservatively. Secondary aggregate-return
+    // registers still need explicit uses; their presence cannot be inferred.
+    return fixed;
 }
 
 }  // namespace
@@ -193,37 +229,48 @@ Allocation LinearScanAllocator::run(MFunction& fn) {
 
     std::vector<LiveInterval> intervals = computeIntervals(fn);
 
-    // Precompute, per program point, which physical registers are occupied by
-    // fixed PhysReg operands or call clobbers, so we never hand those out while
-    // they are live. GP and XMM files are tracked in separate masks. For the
-    // scaffold we treat a fixed physreg as busy only at its own program point
-    // (straight-line code); this is conservative enough for ABI arg/return
-    // placement and call clobbers as currently modeled.
+    // Physical values need CFG liveness too: a fixed argument register remains
+    // occupied between its setup and consumption, not only at those two points.
     int numPoints = 0;
     for (const auto& bb : fn.blocks()) numPoints += static_cast<int>(bb.insts.size());
     std::vector<std::uint16_t> gpBusyAt(numPoints > 0 ? numPoints : 1, 0);
     std::vector<std::uint16_t> xmmBusyAt(numPoints > 0 ? numPoints : 1, 0);
     {
-        int pp = 0;
-        for (const auto& bb : fn.blocks()) {
-            for (const auto& inst : bb.insts) {
-                for (const auto& op : inst.operands) {
-                    if (op.kind == OperandKind::PhysReg) {
-                        if (op.phys != PhysReg::None)
-                            gpBusyAt[pp] |= (1u << regIndex(op.phys));
-                        if (op.xmm != XmmReg::None)
-                            xmmBusyAt[pp] |= (1u << xmmIndex(op.xmm));
-                    }
-                }
-                for (PhysReg c : inst.clobbers) {
-                    gpBusyAt[pp] |= (1u << regIndex(c));
-                }
-                // A call clobbers all caller-saved XMM registers.
-                if (inst.op == MOpcode::Call) {
-                    for (XmmReg x : abi_.xmmCallerSaved)
-                        xmmBusyAt[pp] |= (1u << xmmIndex(x));
-                }
-                ++pp;
+        const auto count = fn.blocks().size();
+        std::vector<std::uint32_t> uses(count, 0), defs(count, 0);
+        std::vector<std::uint32_t> liveIn(count, 0), liveOut(count, 0);
+        std::vector<std::vector<std::uint32_t>> succ(count);
+        for (std::uint32_t b = 0; b < count; ++b) {
+            succ[b] = successorsOf(fn, b);
+            for (const auto& inst : fn.blocks()[b].insts) {
+                const auto fixed = fixedRegisters(inst, abi_);
+                uses[b] |= fixed.uses & ~defs[b];
+                defs[b] |= fixed.defs;
+            }
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (std::size_t b = count; b-- > 0;) {
+                std::uint32_t out = 0;
+                for (auto s : succ[b]) out |= liveIn[s];
+                const auto in = uses[b] | (out & ~defs[b]);
+                if (in != liveIn[b] || out != liveOut[b]) changed = true;
+                liveIn[b] = in;
+                liveOut[b] = out;
+            }
+        }
+        int pp = numPoints;
+        for (std::size_t b = count; b-- > 0;) {
+            auto live = liveOut[b];
+            const auto& insts = fn.blocks()[b].insts;
+            for (auto it = insts.rbegin(); it != insts.rend(); ++it) {
+                const auto fixed = fixedRegisters(*it, abi_);
+                const auto busy = live | fixed.uses | fixed.defs;
+                --pp;
+                gpBusyAt[pp] = static_cast<std::uint16_t>(busy);
+                xmmBusyAt[pp] = static_cast<std::uint16_t>(busy >> 16);
+                live = fixed.uses | (live & ~fixed.defs);
             }
         }
     }
@@ -284,6 +331,10 @@ Allocation LinearScanAllocator::run(MFunction& fn) {
         }
     };
 
+    // Recheck fixed-register interference on eviction as well as first
+    // assignment. Whole-interval allocation currently makes this redundant:
+    // an eligible victim contains iv. Keep the safety condition explicit so
+    // eviction cannot bypass it if interval/splitting policy changes later.
     for (const auto& iv : intervals) {
         const bool isXmm = fn.vregClass(iv.vreg) == RegClass::XMM;
         if (isXmm) {
@@ -294,7 +345,8 @@ Allocation LinearScanAllocator::run(MFunction& fn) {
                 activeXMM.insert(iv);
             } else if (!activeXMM.empty()) {
                 auto last = std::prev(activeXMM.end());
-                if (last->end > iv.end) {
+                if (last->end > iv.end &&
+                    !xmmBusyDuring(alloc.vregToXmm[last->vreg], iv.start, iv.end)) {
                     XmmReg stolen = alloc.vregToXmm[last->vreg];
                     alloc.vregToXmm[last->vreg] = XmmReg::None;
                     alloc.vregToSlot[last->vreg] = fn.addFrameSlot(8, 8, true);
@@ -320,7 +372,8 @@ Allocation LinearScanAllocator::run(MFunction& fn) {
             activeGP.insert(iv);
         } else if (!activeGP.empty()) {
             auto last = std::prev(activeGP.end());
-            if (last->end > iv.end) {
+            if (last->end > iv.end &&
+                !gpBusyDuring(alloc.vregToPhys[last->vreg], iv.start, iv.end)) {
                 PhysReg stolen = alloc.vregToPhys[last->vreg];
                 alloc.vregToPhys[last->vreg] = PhysReg::None;
                 alloc.vregToSlot[last->vreg] = fn.addFrameSlot(8, 8, /*isSpill=*/true);

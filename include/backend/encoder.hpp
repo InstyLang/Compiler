@@ -54,7 +54,7 @@ public:
     // section. The caller patches it later with patchRel32() once the target
     // offset is known.
     enum class Branch : std::uint8_t { Jmp, Je, Jne, Jl, Jle, Jg, Jge,
-                                       Jb, Jbe, Ja, Jae };
+                                       Jb, Jbe, Ja, Jae, Jp, Jnp };
     std::uint64_t branchPlaceholder(Branch kind);
 
     // Patches a previously-emitted rel32 displacement field at `dispOffset` so

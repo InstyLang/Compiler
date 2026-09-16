@@ -69,6 +69,17 @@ void testLexer() {
     CHECK(ints[1].value.find("3F8") != std::string::npos ||
           ints[1].value.find("0x") != std::string::npos);
 
+    auto sci = lexer.tokenize("1.5e2 2E-1");
+    CHECK(sci[0].type == TokenType::FloatLiteral && sci[0].value == "1.5e2");
+    CHECK(sci[1].type == TokenType::FloatLiteral && sci[1].value == "2E-1");
+
+    ErrorReporting::initErrorReporter("0x", "<test>");
+    auto badHex = lexer.tokenize("0x");
+    CHECK(badHex[0].type == TokenType::IntegerLiteral);
+    CHECK(ErrorReporting::globalErrorReporter &&
+          ErrorReporting::globalErrorReporter->hasError());
+    ErrorReporting::cleanupErrorReporter();
+
     auto str = lexer.tokenize("\"Hello\\n\"");
     CHECK(str[0].type == TokenType::StringLiteral);
     CHECK(str[0].value == "Hello\n");
@@ -236,6 +247,13 @@ bool semaClean(const std::string& source) {
 void testSema() {
     CHECK(semaClean("module main\nfun main() -> i32 {\n  i32 x = 1\n  return x\n}\n"));
     CHECK(semaClean("fun add(i64 a, i64 b) -> i64 {\n  return a + b\n}\n"));
+    CHECK(semaClean("fun f() -> i32 {\n  i8 x = 127\n  return cast<i32>(x)\n}\n"));
+    CHECK(semaClean("fun f() -> i32 {\n  i8 x = -128\n  return cast<i32>(x)\n}\n"));
+    CHECK(!semaClean("fun f() -> i32 {\n  i8 x = 300\n  return cast<i32>(x)\n}\n"));
+    CHECK(!semaClean("fun f() -> i32 {\n  i32* p = 123\n  return 0\n}\n"));
+    CHECK(semaClean("fun f() -> i32 {\n  i32* p = 0\n  return 0\n}\n"));
+    CHECK(!semaClean("fun f() -> i32 {\n  u32 a = 1\n  i32 b = 1\n  return a + b\n}\n"));
+    CHECK(semaClean("fun f() -> i64 {\n  i64 a = 1\n  u8 b = 2\n  return a + b\n}\n"));
 
     CHECK(!semaClean("fun f() -> void {\n  wibble x = 1\n}\n"));
     CHECK(!semaClean("fun f() -> i32 {\n  return missing\n}\n"));

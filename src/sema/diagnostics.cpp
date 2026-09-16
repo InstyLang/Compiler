@@ -78,4 +78,79 @@ bool Checker::isIntLiteral(const AST::NodePtr& node) const {
     }
 }
 
+bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
+                             bool& ok) const {
+    if (!node) {
+        ok = false;
+        return false;
+    }
+    switch (node->nodeType()) {
+        case AST::NodeType::IntegerLiteral: {
+            bits = static_cast<unsigned __int128>(
+                static_cast<const AST::IntegerLiteral*>(node.get())->value);
+            return true;
+        }
+        case AST::NodeType::UnaryExpr: {
+            auto* un = static_cast<const AST::UnaryExpr*>(node.get());
+            if (!foldIntLiteral(un->operand, bits, ok)) return false;
+            if (un->op == "-") bits = static_cast<unsigned __int128>(0) - bits;
+            else if (un->op == "!") bits = bits == 0 ? 1 : 0;
+            else if (un->op == "~") bits = ~bits;
+            else if (un->op != "+") {
+                ok = false;
+                return false;
+            }
+            return true;
+        }
+        case AST::NodeType::BinaryOperation: {
+            auto* bin = static_cast<const AST::BinaryOperationExpr*>(node.get());
+            unsigned __int128 lhs = 0;
+            unsigned __int128 rhs = 0;
+            if (!foldIntLiteral(bin->lhs, lhs, ok) || !foldIntLiteral(bin->rhs, rhs, ok)) {
+                return false;
+            }
+            if (bin->op == "+") bits = lhs + rhs;
+            else if (bin->op == "-") bits = lhs - rhs;
+            else if (bin->op == "*") bits = lhs * rhs;
+            else if (bin->op == "/") {
+                if (rhs == 0) { ok = false; return false; }
+                bits = lhs / rhs;
+            } else if (bin->op == "%") {
+                if (rhs == 0) { ok = false; return false; }
+                bits = lhs % rhs;
+            } else if (bin->op == "&") bits = lhs & rhs;
+            else if (bin->op == "|") bits = lhs | rhs;
+            else if (bin->op == "^") bits = lhs ^ rhs;
+            else {
+                ok = false;
+                return false;
+            }
+            return true;
+        }
+        case AST::NodeType::ShiftOperation: {
+            auto* sh = static_cast<const AST::ShiftOperationExpr*>(node.get());
+            unsigned __int128 lhs = 0;
+            unsigned __int128 rhs = 0;
+            if (!foldIntLiteral(sh->lhs, lhs, ok) || !foldIntLiteral(sh->rhs, rhs, ok)) {
+                return false;
+            }
+            const unsigned amt = static_cast<unsigned>(rhs);
+            if (amt >= 128) {
+                bits = 0;
+                return true;
+            }
+            if (sh->op == "<<") bits = lhs << amt;
+            else if (sh->op == ">>") bits = lhs >> amt;
+            else {
+                ok = false;
+                return false;
+            }
+            return true;
+        }
+        default:
+            ok = false;
+            return false;
+    }
+}
+
 }

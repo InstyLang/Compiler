@@ -1,0 +1,129 @@
+module main
+
+struct Big { i64 a i64 b i64 c }
+struct WithSlice { i64 tag i32[] values }
+
+i32 destroyed = 0
+
+class Cell {
+    i32 value
+    constructor(i32 n) { this.value = n }
+    destructor() -> void { destroyed = destroyed + this.value }
+}
+
+fun count_once(i32* calls, i64 n) -> i64 {
+    unsafe { ~calls = ~calls + 1 }
+    return n
+}
+
+fun make_big(i64 n) -> Big {
+    Big result
+    result.a = n
+    result.b = n + 1
+    result.c = n + 2
+    return result
+}
+
+fun make_slice(i32* calls) -> i64[] {
+    return new i64[count_once(calls, 5)]
+}
+
+fun consume(i32[] values) -> i64 {
+    i64 n = values.len
+    values[n - 1] = 37
+    if values[n - 1] != 37 { return -1 }
+    delete values
+    return n
+}
+
+fun pass_slice(i64[] values) -> i64[] { return values }
+
+fun main() -> i32 {
+    i32 calls = 0
+    auto ints = new i32[count_once(&calls, 12)]
+    if calls != 1 || ints.len != 12 { return 1 }
+    for i in 0..12 { ints[i] = i + 100 }
+    i64[] longs = new i64[14]
+    for i in 0..14 { longs[i] = 4294967296 + i }
+    if ints[11] != 111 || longs[13] != 4294967309 { return 2 }
+
+    // Struct-sized allocation, direct sret into an element, and neighbor checks.
+    Big[] bigs = new Big[3]
+    bigs[0] = make_big(10)
+    bigs[1] = make_big(20)
+    bigs[2] = make_big(30)
+    if bigs[0].c != 12 || bigs[1].b != 21 || bigs[2].c != 32 { return 3 }
+    Big last = bigs[2]
+    if last.a != 30 { return 4 }
+
+    // Direct pointer declaration compatibility, with exact element matching.
+    i32* legacy = new i32[count_once(&calls, 4)]
+    i64* raw = (new i64[count_once(&calls, 3)]).ptr
+    unsafe {
+        legacy[3] = 77
+        raw[2] = 4294967297
+        if legacy[3] != 77 || raw[2] != 4294967297 { return 5 }
+    }
+    if calls != 3 { return 6 }
+    if (new i32[count_once(&calls, 7)]).len != 7 || calls != 4 { return 7 }
+    // A constructor makes a direct indexed read deterministic.
+    if (new Cell[2](19))[1].value != 19 { return 8 }
+    (new i32[2])[1] = 29
+
+    if consume(new i32[count_once(&calls, 6)]) != 6 || calls != 5 { return 9 }
+    i64[] returned = pass_slice(make_slice(&calls))
+    if returned.len != 5 || calls != 6 { return 10 }
+    returned[4] = 4294967300
+    if returned[4] != 4294967300 { return 11 }
+
+    // Nested slice elements and a slice-bearing struct literal.
+    auto nested = [new i32[count_once(&calls, 2)], new i32[count_once(&calls, 3)]]
+    if calls != 8 || nested[0].len != 2 || nested[1].len != 3 { return 12 }
+    nested[0][1] = 41
+    nested[1][2] = 42
+    if nested[0][1] + nested[1][2] != 83 { return 13 }
+    WithSlice holder = WithSlice { tag: 123, values: new i32[count_once(&calls, 4)] }
+    if holder.tag != 123 || holder.values.len != 4 || calls != 9 { return 14 }
+    holder.values[3] = 43
+    if holder.values[3] != 43 { return 15 }
+    delete holder.values
+    holder.values = new i32[count_once(&calls, 5)]
+    if holder.values.len != 5 || calls != 10 { return 16 }
+    delete nested[0]
+    nested[0] = new i32[count_once(&calls, 6)]
+    if nested[0].len != 6 || calls != 11 { return 17 }
+
+    // Allocation slices are manually deleted once; copies remain non-owning.
+    Cell[] cells = new Cell[count_once(&calls, 3)](2)
+    if cells[2].value != 2 || calls != 12 { return 18 }
+    delete cells
+    if destroyed != 6 { return 19 }
+    delete new Cell[count_once(&calls, 2)](3)
+    if destroyed != 12 || calls != 13 { return 20 }
+    Cell* scalar = new Cell(5)
+    delete scalar
+    if destroyed != 17 { return 21 }
+    i32* nil = 0
+    delete nil
+
+    i32[] empty = new i32[0]
+    if empty.len != 0 { return 22 }
+    delete empty
+    i32[] invalid = new i32[-1]
+    if invalid.len != 0 || invalid.ptr != nil { return 23 }
+    delete invalid
+    i64[] overflow = new i64[9223372036854775807]
+    if overflow.len != 0 { return 24 }
+    delete overflow
+
+    delete ints
+    delete longs
+    delete bigs
+    delete legacy
+    delete raw
+    delete returned
+    delete nested[0]
+    delete nested[1]
+    delete holder.values
+    return 0
+}

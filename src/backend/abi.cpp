@@ -85,8 +85,14 @@ AbiInfo makeAbi(Abi abi) {
 
     // Allocatable pool: caller-saved first (cheap, no save/restore), then
     // callee-saved (require preservation). The allocator prefers earlier
-    // entries. RSP and RBP are deliberately excluded (frame-reserved).
-    info.allocatable = info.callerSaved;
+    // entries. RSP and RBP are frame-reserved. R10/R11 are lowering scratch
+    // (spill reloads, FConst, f16 pack/unpack, unsigned i64->float) and must
+    // stay out of the pool — the same contract XMM4/XMM5 already have.
+    info.allocatable.clear();
+    for (PhysReg r : info.callerSaved) {
+        if (r == PhysReg::R10 || r == PhysReg::R11) continue;
+        info.allocatable.push_back(r);
+    }
     for (PhysReg r : info.calleeSaved) {
         info.allocatable.push_back(r);
     }

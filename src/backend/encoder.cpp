@@ -64,8 +64,10 @@ std::uint64_t Encoder::branchPlaceholder(Branch kind) {
                 case Branch::Jg: cc = 0x8F; break;
                 case Branch::Jb: cc = 0x82; break;
                 case Branch::Jae: cc = 0x83; break;
-                case Branch::Jbe: cc = 0x86; break;
+                 case Branch::Jbe: cc = 0x86; break;
                 case Branch::Ja: cc = 0x87; break;
+                case Branch::Jp: cc = 0x8A; break;
+                case Branch::Jnp: cc = 0x8B; break;
                 case Branch::Jmp: break;  // unreachable
             }
             sec.bytes.push_back(cc);

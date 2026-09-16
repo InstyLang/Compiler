@@ -14,7 +14,8 @@ SemaResult Analyzer::analyze(const std::shared_ptr<AST::ProgramRoot>& program,
                              const std::vector<EnumInfo>& importedEnums,
                              const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
                              const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
-                             const std::vector<SumTypeInfo>& importedSumTypes) {
+                             const std::vector<SumTypeInfo>& importedSumTypes,
+                             const std::vector<GlobalInfo>& importedGlobals) {
     SemaResult result;
 
     const size_t errorsBefore =
@@ -31,7 +32,7 @@ SemaResult Analyzer::analyze(const std::shared_ptr<AST::ProgramRoot>& program,
     checker.run(program, importedFunctions, importedStructs,
                 importedClasses, importedEnums,
                 importedClassTemplates, importedFunctionTemplates,
-                importedSumTypes);
+                importedSumTypes, importedGlobals);
 
     bool newErrors = false;
     if (reporter_) {
@@ -59,7 +60,8 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
                   const std::vector<EnumInfo>& importedEnums,
                   const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
                   const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
-                  const std::vector<SumTypeInfo>& importedSumTypes) {
+                  const std::vector<SumTypeInfo>& importedSumTypes,
+                  const std::vector<GlobalInfo>& importedGlobals) {
     importedStore_ = importedFunctions;
 
     pushScope();
@@ -151,6 +153,22 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
             classFields_[st.name] = {};
         }
         result_.sumTypes.push_back(st);
+    }
+
+    // Imported globals (export const): register them in scope and in the result
+    // so the current module can reference them. Only exported globals are passed.
+    // They are flagged as imported so the backend references rather than defines
+    // them -- the declaring module owns the storage.
+    for (const auto& g : importedGlobals) {
+        bool present = false;
+        for (const auto& existing : result_.globals) {
+            if (existing.name == g.name) { present = true; break; }
+        }
+        if (!present) {
+            GlobalInfo ext = g;
+            ext.isImported = true;
+            result_.globals.push_back(ext);
+        }
     }
 
     // Now the local declaration pre-pass; signatures can see imported types.

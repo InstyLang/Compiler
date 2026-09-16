@@ -1,0 +1,31 @@
+module main
+
+fun main() -> i32 {
+    f64 nan = 0.0 / 0.0
+    f64 one = 1.0
+    if nan == nan {
+        return 1
+    }
+    if nan == one {
+        return 2
+    }
+    if nan < one {
+        return 3
+    }
+    if nan > one {
+        return 4
+    }
+    if nan <= one {
+        return 5
+    }
+    if nan >= one {
+        return 6
+    }
+    if nan != one {
+        if !(nan != nan) {
+            return 7
+        }
+        return 42
+    }
+    return 0
+}

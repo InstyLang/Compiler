@@ -49,7 +49,8 @@ private:
                      bool preferHostedEntry = false,
                      const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
                      const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
-                     const std::vector<Sema::SumTypeInfo>& importedSumTypes = {});
+                     const std::vector<Sema::SumTypeInfo>& importedSumTypes = {},
+                     const std::vector<Sema::GlobalInfo>& importedGlobals = {});
 
     int runCheckOnly();
     int runEmitTokens();

@@ -27,6 +27,13 @@ CompilerDriver::CompilerDriver(Config::CompilerConfig config) : config_(std::mov
 std::string CompilerDriver::objectPathFor(const std::string& sourcePath) const {
     fs::path src(sourcePath);
     std::string stem = src.stem().string();
+    fs::path parent = src.parent_path();
+    if (!parent.empty()) {
+        std::string dir = parent.filename().string();
+        if (!dir.empty() && dir != "." && dir != "..") {
+            stem = dir + "_" + stem;
+        }
+    }
     if (!config_.objectsDir.empty()) {
         std::error_code ec;
         fs::create_directories(config_.objectsDir, ec);
@@ -140,6 +147,10 @@ combineModulesForBackend(const std::vector<CompiledModule>& modules,
             }
         }
         for (const auto& g : mod.sema.globals) {
+            // An imported global is a *reference* to a definition another
+            // module owns; it legitimately appears in every importer's sema
+            // result. Only a second real definition is a duplicate.
+            if (g.isImported) continue;
             auto it = globalOwner.find(g.name);
             if (it != globalOwner.end()) {
                 errorOut = "duplicate global '" + g.name + "' across modules '" +
@@ -184,12 +195,13 @@ bool CompilerDriver::compileFile(const std::string& path,
                                  bool preferHostedEntry,
                                  const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
                                  const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
-                                 const std::vector<Sema::SumTypeInfo>& importedSumTypes) {
-    const std::string source = Utilities::readFile(path);
-    if (source.empty() && !fs::exists(path)) {
+                                 const std::vector<Sema::SumTypeInfo>& importedSumTypes,
+                                 const std::vector<Sema::GlobalInfo>& importedGlobals) {
+    if (!fs::exists(path) || !fs::is_regular_file(path)) {
         std::cerr << "error: cannot read '" << path << "'\n";
         return false;
     }
+    const std::string source = Utilities::readFile(path);
 
     Parser parser;
     auto ast = parseSource(source, path, parser);
@@ -219,7 +231,8 @@ bool CompilerDriver::compileFile(const std::string& path,
                                              importedClasses, importedEnums,
                                              importedClassTemplates,
                                              importedFunctionTemplates,
-                                             importedSumTypes);
+                                             importedSumTypes,
+                                             importedGlobals);
 
     out.moduleName = sema.moduleName.empty() ? ast->moduleName : sema.moduleName;
     out.sourcePath = path;
@@ -366,11 +379,11 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
         }
         visited.insert(canonical);
 
-        const std::string source = Utilities::readFile(canonical);
-        if (source.empty() && !fs::exists(canonical)) {
+        if (!fs::exists(canonical) || !fs::is_regular_file(canonical)) {
             std::cerr << "error: cannot read '" << canonical << "'\n";
             return false;
         }
+        const std::string source = Utilities::readFile(canonical);
         Parser parser;
         ErrorReporting::initErrorReporter(source, canonical);
         std::string mutableSource = source;
@@ -426,6 +439,7 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
     std::vector<AST::ClassDeclaration*> importedClassTemplates;
     std::vector<AST::FunctionDeclaration*> importedFunctionTemplates;
     std::vector<Sema::SumTypeInfo> importedSumTypes;
+    std::vector<Sema::GlobalInfo> importedGlobals;
     std::vector<std::string> objectFiles;
     std::vector<CompiledModule> compiledModules;
     // Shared libraries requested via `lib(...)` across all compiled modules.
@@ -442,7 +456,7 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
                          /*emitArtifacts=*/!wholeProgram && !checkOnly,
                          /*preferHostedEntry=*/!requiredLibSet.empty(),
                          importedClassTemplates, importedFunctionTemplates,
-                         importedSumTypes)) {
+                         importedSumTypes, importedGlobals)) {
             return 1;
         }
         if (printModuleSummary) {
@@ -523,6 +537,16 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
                 if (existing.name == st.name) { present = true; break; }
             }
             if (!present) importedSumTypes.push_back(st);
+        }
+        // Propagate exported globals (export const) so importing modules can
+        // reference them. Non-exported globals stay private to their module.
+        for (const auto& g : mod.sema.globals) {
+            if (!g.isExported) continue;
+            bool present = false;
+            for (const auto& existing : importedGlobals) {
+                if (existing.name == g.name) { present = true; break; }
+            }
+            if (!present) importedGlobals.push_back(g);
         }
         if (!mod.objectPath.empty()) {
             objectFiles.push_back(mod.objectPath);

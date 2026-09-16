@@ -1,0 +1,13 @@
+module main
+
+fun main() -> i32 {
+    u64 u = 18446744073709551615
+    f64 d = cast<f64>(u)
+    if d < 0.0 {
+        return 100
+    }
+    if d == 18446744073709551616.0 {
+        return 42
+    }
+    return 1
+}

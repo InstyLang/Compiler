@@ -1,0 +1,26 @@
+module main
+
+fun mix() -> i64 {
+    i64 a0 = 1
+    i64 a1 = 2
+    i64 a2 = 3
+    i64 a3 = 4
+    i64 a4 = 5
+    i64 a5 = 6
+    i64 a6 = 7
+    i64 a7 = 8
+    i64 a8 = 9
+    i64 a9 = 10
+    i64 a10 = 11
+    i64 a11 = 12
+    f16 x = cast<f16>(2.0)
+    return a0+(a1+(a2+(a3+(a4+(a5+(a6+(a7+(a8+(cast<i64>(x)+(a9+(a10+a11)))))))))))
+}
+
+fun main() -> i32 {
+    i64 r = mix()
+    if r == 80 {
+        return 80
+    }
+    return cast<i32>(r & 0xFF)
+}

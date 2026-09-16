@@ -41,6 +41,7 @@ __int128 parseInteger128(const std::string& raw) {
         base = 16;
         p += 2;
     }
+    const unsigned __int128 limit = ~static_cast<unsigned __int128>(0);
     for (; *p; ++p) {
         char c = *p;
         unsigned d;
@@ -48,6 +49,11 @@ __int128 parseInteger128(const std::string& raw) {
         else if (base == 16 && c >= 'a' && c <= 'f') d = static_cast<unsigned>(c - 'a' + 10);
         else if (base == 16 && c >= 'A' && c <= 'F') d = static_cast<unsigned>(c - 'A' + 10);
         else break;
+        if (d >= static_cast<unsigned>(base)) break;
+        if (acc > (limit - d) / static_cast<unsigned __int128>(base)) {
+            acc = limit;
+            continue;
+        }
         acc = acc * static_cast<unsigned __int128>(base) + d;
     }
     return static_cast<__int128>(acc);

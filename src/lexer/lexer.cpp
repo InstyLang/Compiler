@@ -293,8 +293,15 @@ void Lexer::lexNumber(std::vector<Token>& out) {
     if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
         text.push_back(advance());
         text.push_back(advance());
+        int digits = 0;
         while (!atEnd() && (isHexDigit(peek()) || peek() == '_')) {
+            if (isHexDigit(peek())) ++digits;
             text.push_back(advance());
+        }
+        if (digits == 0) {
+            reportInvalid("E0004", "malformed hex literal", startLine, startColumn,
+                          static_cast<int>(pos_) - startOffset, startOffset,
+                          "write at least one hex digit after 0x");
         }
         out.push_back(makeToken(TokenType::IntegerLiteral, std::move(text),
                                 startOffset, startLine, startColumn));
@@ -305,11 +312,27 @@ void Lexer::lexNumber(std::vector<Token>& out) {
         text.push_back(advance());
     }
 
+    bool isFloat = false;
     if (peek() == '.' && isDecimalDigit(peek(1))) {
+        isFloat = true;
         text.push_back(advance());
         while (!atEnd() && (isDecimalDigit(peek()) || peek() == '_')) {
             text.push_back(advance());
         }
+    }
+    if (peek() == 'e' || peek() == 'E') {
+        const char next = peek(1);
+        const char afterSign = (next == '+' || next == '-') ? peek(2) : next;
+        if (isDecimalDigit(afterSign)) {
+            isFloat = true;
+            text.push_back(advance());
+            if (peek() == '+' || peek() == '-') text.push_back(advance());
+            while (!atEnd() && (isDecimalDigit(peek()) || peek() == '_')) {
+                text.push_back(advance());
+            }
+        }
+    }
+    if (isFloat) {
         out.push_back(makeToken(TokenType::FloatLiteral, std::move(text),
                                 startOffset, startLine, startColumn));
         return;

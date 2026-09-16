@@ -882,6 +882,8 @@ bool Lowering::emitInst(MFunction& fn, const Allocation& alloc, const MInst& ins
                 case Cond::ULE: br = Encoder::Branch::Jbe; break;
                 case Cond::UGT: br = Encoder::Branch::Ja; break;
                 case Cond::UGE: br = Encoder::Branch::Jae; break;
+                case Cond::P: br = Encoder::Branch::Jp; break;
+                case Cond::NP: br = Encoder::Branch::Jnp; break;
             }
             std::uint64_t disp = enc_.branchPlaceholder(br);
             fixups_.push_back({disp, inst.operands[0].label});
@@ -903,7 +905,9 @@ bool Lowering::emitInst(MFunction& fn, const Allocation& alloc, const MInst& ins
                 case Cond::ULT: enc_.emit([r](std::uint8_t* p){ return fe64_SETC8r(p, 0, r); }); break;   // below = CF
                 case Cond::ULE: enc_.emit([r](std::uint8_t* p){ return fe64_SETBE8r(p, 0, r); }); break;
                 case Cond::UGT: enc_.emit([r](std::uint8_t* p){ return fe64_SETA8r(p, 0, r); }); break;
-                case Cond::UGE: enc_.emit([r](std::uint8_t* p){ return fe64_SETNC8r(p, 0, r); }); break;  // above-or-equal = !CF
+                case Cond::UGE: enc_.emit([r](std::uint8_t* p){ return fe64_SETNC8r(p, 0, r); }); break;
+                case Cond::P: enc_.emit([r](std::uint8_t* p){ return fe64_SETP8r(p, 0, r); }); break;
+                case Cond::NP: enc_.emit([r](std::uint8_t* p){ return fe64_SETNP8r(p, 0, r); }); break;
             }
             // Zero-extend the byte result to the full 64-bit register.
             enc_.emit([r](std::uint8_t* p){ return fe64_MOVZXr64r8(p, 0, r, r); });
@@ -1146,12 +1150,48 @@ bool Lowering::emitInst(MFunction& fn, const Allocation& alloc, const MInst& ins
         }
         case MOpcode::CvtI2F: {
             // def0(xmm) = (float) use1(gpr).  width selects dest precision:
-            // cvtsi2sd (f64) or cvtsi2ss (f32), 64-bit GP source.
+            // cvtsi2sd (f64) or cvtsi2ss (f32), 64-bit GP source. Unsigned 64-bit
+            // values >= 2^63 need the (v>>1)|(v&1) then double sequence: cvtsi2s*
+            // is signed and would produce a negative result.
             const MOperand& d = inst.operands[0];
             const MOperand& s = inst.operands[1];
             PhysReg sr = physOf(s, PhysReg::R11, /*isUse=*/true);
             XmmReg dr = physOfXmm(d, XmmReg::XMM4, /*isUse=*/false);
             const bool f32 = inst.width == 4;
+            if (!inst.isSigned) {
+                enc_.emit([sr](std::uint8_t* p){
+                    return fe64_TEST64rr(p, 0, fe(sr), fe(sr)); });
+                const std::uint64_t jsDisp = enc_.branchPlaceholder(Encoder::Branch::Jl);
+                enc_.emit([dr, sr, f32](std::uint8_t* p){
+                    return f32 ? fe64_SSE_CVTSI2SS64rr(p, 0, fx(dr), fe(sr))
+                               : fe64_SSE_CVTSI2SD64rr(p, 0, fx(dr), fe(sr)); });
+                const std::uint64_t doneDisp = enc_.branchPlaceholder(Encoder::Branch::Jmp);
+                const std::uint64_t largeOff = enc_.offset();
+                enc_.patchRel32(jsDisp, largeOff);
+                enc_.emit([sr](std::uint8_t* p){
+                    return fe64_MOV64rr(p, 0, fe(PhysReg::R10), fe(sr)); });
+                enc_.emit([](std::uint8_t* p){
+                    return fe64_SHR64ri(p, 0, fe(PhysReg::R10), 1); });
+                enc_.emit([sr](std::uint8_t* p){
+                    return fe64_MOV64rr(p, 0, fe(PhysReg::R11), fe(sr)); });
+                enc_.emit([](std::uint8_t* p){
+                    return fe64_AND64ri(p, 0, fe(PhysReg::R11), 1); });
+                enc_.emit([](std::uint8_t* p){
+                    return fe64_OR64rr(p, 0, fe(PhysReg::R10), fe(PhysReg::R11)); });
+                enc_.emit([dr, f32](std::uint8_t* p){
+                    return f32 ? fe64_SSE_CVTSI2SS64rr(p, 0, fx(dr), fe(PhysReg::R10))
+                               : fe64_SSE_CVTSI2SD64rr(p, 0, fx(dr), fe(PhysReg::R10)); });
+                if (f32) {
+                    enc_.emit([dr](std::uint8_t* p){
+                        return fe64_SSE_ADDSSrr(p, 0, fx(dr), fx(dr)); });
+                } else {
+                    enc_.emit([dr](std::uint8_t* p){
+                        return fe64_SSE_ADDSDrr(p, 0, fx(dr), fx(dr)); });
+                }
+                enc_.patchRel32(doneDisp, enc_.offset());
+                storeIfSpilledXmm(d, dr);
+                return true;
+            }
             enc_.emit([dr, sr, f32](std::uint8_t* p){
                 return f32 ? fe64_SSE_CVTSI2SS64rr(p, 0, fx(dr), fe(sr))
                            : fe64_SSE_CVTSI2SD64rr(p, 0, fx(dr), fe(sr)); });

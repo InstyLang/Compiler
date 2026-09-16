@@ -9,8 +9,12 @@ if(DEFINED USE_STD AND USE_STD)
     set(INSTY_STD_FLAG)
 endif()
 
+if(NOT DEFINED INSTY_TARGET OR INSTY_TARGET STREQUAL "")
+    set(INSTY_TARGET "x86_64_windows")
+endif()
+
 execute_process(
-    COMMAND "${INSTY}" ${INSTY_STD_FLAG} "--target" "x86_64_windows"
+    COMMAND "${INSTY}" ${INSTY_STD_FLAG} "--target" "${INSTY_TARGET}"
             "-O0" "-o" "${EXE}" "${SRC}"
     RESULT_VARIABLE build_rc
     OUTPUT_VARIABLE build_out

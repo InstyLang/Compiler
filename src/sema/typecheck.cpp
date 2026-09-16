@@ -192,7 +192,7 @@ const FunctionInfo* Checker::findFunctionByMangled(const std::string& mangled) c
 }
 
 bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
-                           bool valueIsLiteral) {
+                           const AST::NodePtr& valueNode) {
     if (!target || !value) return true;
     if (target->isError() || value->isError()) return true;
     if (Types::TypeContext::equals(target, value)) return true;
@@ -205,8 +205,28 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         value = v;
     }
 
+    const bool valueIsLiteral = isIntLiteral(valueNode);
     if (target->isInteger() && value->isInteger()) {
-        if (valueIsLiteral) return true;
+        if (valueIsLiteral) {
+            unsigned __int128 bits = 0;
+            bool ok = true;
+            if (!foldIntLiteral(valueNode, bits, ok) || !ok) return true;
+            const int w = target->bitWidth;
+            if (w <= 0 || w > 128) return true;
+            const __int128 sval = static_cast<__int128>(bits);
+            if (target->isSigned) {
+                if (w == 128) return true;
+                const __int128 min = -(static_cast<__int128>(1) << (w - 1));
+                const __int128 max = (static_cast<__int128>(1) << (w - 1)) - 1;
+                return sval >= min && sval <= max;
+            }
+            if (w == 128) return sval >= 0;
+            const unsigned __int128 umax =
+                (static_cast<unsigned __int128>(1) << w) - 1;
+            if (sval >= 0) return bits <= umax;
+            const __int128 umin = -(static_cast<__int128>(1) << w);
+            return sval >= umin;
+        }
         if (target->isSigned == value->isSigned &&
             target->bitWidth >= value->bitWidth) {
             return true;
@@ -217,7 +237,12 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
     if (target->isFloat() && value->isFloat()) {
         return target->bitWidth >= value->bitWidth;
     }
-    if (target->isPointerLike() && value->isInteger() && valueIsLiteral) return true;
+    if (target->isPointerLike() && value->isInteger() && valueIsLiteral) {
+        unsigned __int128 bits = 0;
+        bool ok = true;
+        if (!foldIntLiteral(valueNode, bits, ok) || !ok) return false;
+        return bits == 0;
+    }
     return false;
 }
 
@@ -231,17 +256,13 @@ bool Checker::isSliceInitializer(Types::TypeRef target, Types::TypeRef value,
     if (value->kind == Types::Kind::Array) {
         return Types::TypeContext::equals(target->element, value->element);
     }
-    // Raw pointers do not carry a length. The only pointer expression accepted as
-    // slice sugar is `new T[n]`, where codegen can reuse the allocation count for
-    // the slice header. Other pointers must be exposed explicitly as `.ptr` later.
-    if (value->kind == Types::Kind::Pointer && valueNode &&
-        valueNode->nodeType() == AST::NodeType::NewExpression) {
-        return Types::TypeContext::equals(target->element, value->element);
-    }
+    // new T[n] is already Slice-typed. A scalar new/raw pointer has no slice
+    // length and must not enter the contextual array-to-slice conversion.
     return false;
 }
 
-Types::TypeRef Checker::arithResult(Types::TypeRef a, Types::TypeRef b) {
+Types::TypeRef Checker::arithResult(Types::TypeRef a, Types::TypeRef b,
+                                    const AST::ExprAST* at) {
     if (!a || !b) return types_.errorType();
     if (a->isError() || b->isError()) return types_.errorType();
     if (a->isFloat() || b->isFloat()) {
@@ -253,6 +274,17 @@ Types::TypeRef Checker::arithResult(Types::TypeRef a, Types::TypeRef b) {
     }
     if (a->isInteger() && b->isInteger()) {
         int w = a->bitWidth > b->bitWidth ? a->bitWidth : b->bitWidth;
+        if (a->isSigned != b->isSigned) {
+            const Types::TypeRef wider = a->bitWidth >= b->bitWidth ? a : b;
+            const Types::TypeRef narrower = a->bitWidth >= b->bitWidth ? b : a;
+            const bool lossless = wider->isSigned &&
+                                  wider->bitWidth > narrower->bitWidth;
+            if (lossless) return types_.intType(w, true);
+            emit("E2006",
+                 "mixed signed/unsigned integer arithmetic requires an explicit cast",
+                 at, types_.toString(a) + " vs " + types_.toString(b));
+            return types_.errorType();
+        }
         return types_.intType(w, a->isSigned);
     }
     return types_.errorType();
@@ -607,10 +639,24 @@ void Checker::checkVarDecl(AST::VariableDeclarationExpr* node) {
     }
 
     Types::TypeRef initType = nullptr;
-    bool initLiteral = false;
     if (node->initialValue) {
         initType = checkExpr(node->initialValue);
-        initLiteral = isIntLiteral(node->initialValue);
+    }
+    // Compatibility only for a direct, explicitly typed pointer declaration:
+    // T* p = new T[n] means T* p = (new T[n]).ptr. Keep the allocation itself
+    // Slice-typed, and do not permit arbitrary slice-to-pointer conversions.
+    if (declared && declared->kind == Types::Kind::Pointer && initType &&
+        initType->kind == Types::Kind::Slice && node->initialValue &&
+        node->initialValue->nodeType() == AST::NodeType::NewExpression &&
+        Types::TypeContext::equals(declared->element, initType->element)) {
+        auto member = std::make_shared<AST::MemberAccessExpr>();
+        auto property = std::make_shared<AST::IdentifierExpr>();
+        property->name = "ptr";
+        member->object = node->initialValue;
+        member->property = property;
+        member->computed = false;
+        node->initialValue = member;
+        initType = record(member.get(), declared);
     }
     for (const auto& arg : node->constructorArgs) {
         checkExpr(arg);
@@ -628,7 +674,7 @@ void Checker::checkVarDecl(AST::VariableDeclarationExpr* node) {
     }
 
     if (declared && initType && !declared->isError() && !initType->isError()) {
-        if (!isAssignable(declared, initType, initLiteral) &&
+        if (!isAssignable(declared, initType, node->initialValue) &&
             !isSliceInitializer(declared, initType, node->initialValue)) {
             emit("E2005", "cannot initialize '" + node->identifier + "' of type " +
                               types_.toString(declared) + " with value of type " +
@@ -651,9 +697,8 @@ void Checker::checkAssignment(AST::AssignmentExpr* node) {
              "the left-hand side must be a variable, dereference, index, or member");
         return;
     }
-    bool valLiteral = isIntLiteral(node->value);
     if (targetType && valueType && !targetType->isError() && !valueType->isError()) {
-        if (!isAssignable(targetType, valueType, valLiteral) &&
+        if (!isAssignable(targetType, valueType, node->value) &&
             !isSliceInitializer(targetType, valueType, node->value)) {
             emit("E2004", "cannot assign value of type " + types_.toString(valueType) +
                               " to target of type " + types_.toString(targetType),
@@ -721,7 +766,7 @@ void Checker::checkFor(AST::ForLoop* node) {
         // The loop variable spans both bounds: use their unified integer type
         // (falling back to i64) so `for i in 0..xs.len` gives `i` an i64.
         if (ts && te && ts->isInteger() && te->isInteger()) {
-            varType = arithResult(ts, te);
+            varType = arithResult(ts, te, node);
         } else {
             varType = types_.intType(64, true);
         }
@@ -894,14 +939,13 @@ void Checker::checkReturn(AST::ReturnStatement* node) {
         return;
     }
     Types::TypeRef vt = checkExpr(node->returnValue);
-    bool lit = isIntLiteral(node->returnValue);
     if (ret->isVoid()) {
         emit("E2010", "returning a value from a void function", node,
              "remove the return value or change the return type");
         return;
     }
     if (vt && ret && !vt->isError() && !ret->isError() &&
-        !isAssignable(ret, vt, lit) &&
+        !isAssignable(ret, vt, node->returnValue) &&
         !isSliceInitializer(ret, vt, node->returnValue)) {
         emit("E2010", "return type mismatch: expected " + types_.toString(ret) +
                           ", got " + types_.toString(vt),
@@ -1050,18 +1094,29 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
             if (ne->arraySize) {
                 Types::TypeRef countTy = checkExpr(ne->arraySize);
                 if (countTy && !countTy->isError() &&
-                    !(countTy->isInteger() || countTy->kind == Types::Kind::Bool)) {
-                    emit("E2005", "new[] size must be an integer", ne->arraySize.get(),
-                         "use an integer expression for the element count");
+                    (!countTy->isInteger() || countTy->bitWidth > 64)) {
+                    emit("E2005", "new[] size must be an integer of at most 64 bits",
+                         ne->arraySize.get(), "use a nonnegative element count representable as i64");
                 }
             }
             for (const auto& a : ne->arguments) checkExpr(a);
             Types::TypeRef inner = resolveTypeSpelling(ne->typeName, raw);
+            // `new T[n]` is a slice over the heap allocation (len n, per the
+            // language reference); `new T` is a pointer to a single T.
+            if (ne->arraySize) {
+                return record(raw, types_.sliceType(inner));
+            }
             return record(raw, types_.pointerType(inner));
         }
         case AST::NodeType::DeleteExpression: {
             auto* de = static_cast<AST::DeleteExpression*>(raw);
-            if (de->operand) checkExpr(de->operand);
+            Types::TypeRef operandTy = de->operand ? checkExpr(de->operand) : nullptr;
+            if (operandTy && !operandTy->isError() &&
+                operandTy->kind != Types::Kind::Pointer &&
+                operandTy->kind != Types::Kind::Slice) {
+                emit("E2005", "delete requires a pointer or an allocation slice", raw,
+                     "delete the original new allocation, not an array or scalar value");
+            }
             return record(raw, types_.voidType());
         }
         case AST::NodeType::ArrayLiteral: {
@@ -1163,7 +1218,15 @@ Types::TypeRef Checker::checkBinary(AST::BinaryOperationExpr* node) {
         return record(node, types_.boolType());
     }
     if (ad->isNumeric() && bd->isNumeric()) {
-        return record(node, arithResult(ad, bd));
+        if (ad->isInteger() && bd->isInteger() && ad->isSigned != bd->isSigned) {
+            if (isIntLiteral(node->rhs) && isAssignable(ad, bd, node->rhs)) {
+                return record(node, ad);
+            }
+            if (isIntLiteral(node->lhs) && isAssignable(bd, ad, node->lhs)) {
+                return record(node, bd);
+            }
+        }
+        return record(node, arithResult(ad, bd, node));
     }
     emit("E2006", "operator '" + op + "' requires numeric operands", node,
          types_.toString(a) + " " + op + " " + types_.toString(b));
@@ -1258,9 +1321,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                 for (size_t i = 0; i < node->arguments.size(); ++i) {
                     Types::TypeRef at = checkExpr(node->arguments[i]);
                     Types::TypeRef pt = variant->payload[i];
-                    bool lit = isIntLiteral(node->arguments[i]);
                     if (at && pt && !at->isError() && !pt->isError() &&
-                        !isAssignable(pt, at, lit)) {
+                        !isAssignable(pt, at, node->arguments[i])) {
                         emit("E2009", "payload " + std::to_string(i + 1) + " of '" +
                                           st->name + "." + variant->name +
                                           "' has type " + types_.toString(at) +
@@ -1337,9 +1399,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                                             ? checkExpr(node->arguments[i])
                                             : types_.errorType();
                     Types::TypeRef pt = paramTypes[i];
-                    bool lit = isIntLiteral(node->arguments[i]);
                     if (at && pt && !at->isError() && !pt->isError() &&
-                        !isAssignable(pt, at, lit) &&
+                        !isAssignable(pt, at, node->arguments[i]) &&
                         !isSliceInitializer(pt, at, node->arguments[i])) {
                         emit("E2009", "argument " + std::to_string(i + 1) + " to '" +
                                           name + "' has type " + types_.toString(at) +
@@ -1400,9 +1461,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                                                 ? checkExpr(node->arguments[i])
                                                 : types_.errorType();
                         Types::TypeRef pt = ci.constructorParams[i];
-                        bool lit = isIntLiteral(node->arguments[i]);
                         if (at && pt && !at->isError() && !pt->isError() &&
-                            !isAssignable(pt, at, lit) &&
+                            !isAssignable(pt, at, node->arguments[i]) &&
                             !isSliceInitializer(pt, at, node->arguments[i])) {
                             emit("E2009", "argument " + std::to_string(i + 1) +
                                               " to constructor '" + name +
@@ -1556,9 +1616,8 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
             Types::TypeRef at = node->arguments[i] ? checkExpr(node->arguments[i])
                                                    : types_.errorType();
             Types::TypeRef pt = fn->paramTypes[i];
-            bool lit = isIntLiteral(node->arguments[i]);
             if (at && pt && !at->isError() && !pt->isError() &&
-                !isAssignable(pt, at, lit) &&
+                !isAssignable(pt, at, node->arguments[i]) &&
                 !isSliceInitializer(pt, at, node->arguments[i])) {
                 emit("E2009", "argument " + std::to_string(i + 1) + " to '" + name +
                                   "' has type " + types_.toString(at) + ", expected " +
@@ -2228,6 +2287,23 @@ Types::TypeRef Checker::checkMember(AST::MemberAccessExpr* node) {
         }
     }
 
+    // `module.GLOBAL`: a module-qualified reference to an exported global
+    // (`export const`). The object is a bare identifier that names no value but
+    // matches an imported module, and the member names a known global. Answered
+    // before the object is checked as a value, since a module name is not one.
+    if (node->object && !node->computed && !member.empty() &&
+        node->object->nodeType() == AST::NodeType::IdentifierExpr) {
+        const std::string& qualifier =
+            static_cast<AST::IdentifierExpr&>(*node->object).name;
+        if (!lookupLocal(qualifier)) {
+            for (const auto& g : result_.globals) {
+                if (g.name == member) {
+                    return record(node, g.type ? g.type : types_.errorType());
+                }
+            }
+        }
+    }
+
     Types::TypeRef objType = node->object ? checkExpr(node->object) : types_.errorType();
 
     // `value.insize`: the size of the value's own type. Deliberately answered
@@ -2268,6 +2344,19 @@ Types::TypeRef Checker::checkMember(AST::MemberAccessExpr* node) {
             return record(node, types_.intType(64, true));
         }
         emit("E2007", "slice has no member '" + member + "'", node,
+             "available members are `.ptr` and `.len`");
+        return record(node, types_.errorType());
+    }
+    if (objType && objType->kind == Types::Kind::Array) {
+        // A fixed array exposes its storage as `.ptr` (address of the first
+        // element) and its element count as `.len`, like a slice.
+        if (member == "ptr") {
+            return record(node, types_.pointerType(objType->element));
+        }
+        if (member == "len") {
+            return record(node, types_.intType(64, true));
+        }
+        emit("E2007", "array has no member '" + member + "'", node,
              "available members are `.ptr` and `.len`");
         return record(node, types_.errorType());
     }

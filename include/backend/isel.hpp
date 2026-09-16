@@ -413,9 +413,15 @@ private:
     // returns its address. Handles slice / fixed-array / text / (unsafe) pointer
     // sources and open bounds (start defaults to 0, end to the source length).
     ElemAddr materializeSliceExpr(const AST::SliceExpr& node);
+    // Array-new value boundary: build {data pointer, count}, never return the
+    // allocation pointer as a Slice value. Both paths allocate exactly once.
+    bool emitNewSliceInto(VReg destAddr, const AST::NewExpression& ne);
+    ElemAddr materializeNewSlice(const AST::NewExpression& ne);
     // `new T(...)` / `new T[n](...)`: heap-allocates sizeOf(T) (times n for the
     // array form) bytes via emitMalloc, runs the class constructor (if declared)
-    // with `this` bound to each element's address, and returns the pointer.
+    // with `this` bound to each element's address, and returns the RAW user
+    // pointer (even when sema types the expression as Slice). The optional count
+    // is evaluated once; emitNewSliceInto owns construction of the slice header.
     VReg selNew(const AST::NewExpression& ne, VReg* arrayCountOut = nullptr);
     // Runs class `ci`'s constructor (or zero-initializes, if none) on the object
     // whose address is held in `thisAddr`. `arguments` are the constructor call
@@ -569,7 +575,8 @@ private:
     VReg narrowToHalfIfNeeded(VReg v, Types::TypeRef to);
     // Emit a float MInst tagging its precision width (4=f32, 8=f64) so lowering
     // selects the single- vs double-precision SSE encoding.
-    void emitFW(MOpcode op, std::vector<MOperand> operands, std::uint8_t fw);
+    void emitFW(MOpcode op, std::vector<MOperand> operands, std::uint8_t fw,
+                bool isSigned = true);
 
     // String literal (text) -> a GP vreg holding the RIP-relative address of the
     // literal's NUL-terminated bytes (interned into .rodata by the lowering).

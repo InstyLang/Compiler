@@ -502,9 +502,10 @@ std::uint8_t InstructionSelector::floatComputeWidthOf(Types::TypeRef t) const {
 }
 
 void InstructionSelector::emitFW(MOpcode op, std::vector<MOperand> operands,
-                                 std::uint8_t fw) {
+                                 std::uint8_t fw, bool isSigned) {
     MInst inst{op, std::move(operands)};
     inst.width = fw;
+    inst.isSigned = isSigned;
     emit(inst);
 }
 
@@ -2459,13 +2460,46 @@ bool InstructionSelector::emitCompare(const AST::NodePtr& l, const AST::NodePtr&
         if (failed_) return false;
         std::uint8_t fw = floatComputeWidthOf(isFloatType(lt) ? lt : rt);
         emitFW(MOpcode::FCmp, {MOperand::useVReg(lv), MOperand::useVReg(rv)}, fw);
-        if (op == "==") condOut = Cond::EQ;
-        else if (op == "!=") condOut = Cond::NE;
-        else if (op == "<") condOut = Cond::ULT;
-        else if (op == "<=") condOut = Cond::ULE;
-        else if (op == ">") condOut = Cond::UGT;
-        else if (op == ">=") condOut = Cond::UGE;
+        // wasm's f32/f64 compares are already IEEE (false on NaN except !=).
+        // x86 ucomisd sets ZF=PF=CF=1 for unordered, so a bare je/jb is wrong.
+        if (wasmTarget_) {
+            if (op == "==") condOut = Cond::EQ;
+            else if (op == "!=") condOut = Cond::NE;
+            else if (op == "<") condOut = Cond::ULT;
+            else if (op == "<=") condOut = Cond::ULE;
+            else if (op == ">") condOut = Cond::UGT;
+            else if (op == ">=") condOut = Cond::UGE;
+            else { fail("selector: unsupported float comparison '" + op + "'"); return false; }
+            return true;
+        }
+        Cond rel;
+        const bool invertParity = (op == "!=");
+        if (op == "==" || op == "!=") rel = Cond::EQ;
+        else if (op == "<") rel = Cond::ULT;
+        else if (op == "<=") rel = Cond::ULE;
+        else if (op == ">") rel = Cond::UGT;
+        else if (op == ">=") rel = Cond::UGE;
         else { fail("selector: unsupported float comparison '" + op + "'"); return false; }
+        VReg parity = fn_->newVReg();
+        {
+            MInst s{MOpcode::SetCC, {MOperand::defVReg(parity)}};
+            s.cond = invertParity ? Cond::P : Cond::NP;
+            emit(s);
+        }
+        VReg bits = fn_->newVReg();
+        {
+            MInst s{MOpcode::SetCC, {MOperand::defVReg(bits)}};
+            s.cond = invertParity ? Cond::NE : rel;
+            emit(s);
+        }
+        VReg res = fn_->newVReg();
+        emit({MOpcode::MovRR, {MOperand::defVReg(res), MOperand::useVReg(parity)}});
+        emit({invertParity ? MOpcode::Or : MOpcode::And,
+              {MOperand::useDefVReg(res), MOperand::useVReg(bits)}});
+        VReg zero = fn_->newVReg();
+        emit({MOpcode::MovRI, {MOperand::defVReg(zero), MOperand::immediate(0)}});
+        emit({MOpcode::Cmp, {MOperand::useVReg(res), MOperand::useVReg(zero)}});
+        condOut = Cond::NE;
         return true;
     }
 
@@ -3022,6 +3056,45 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
                     return v;
                 }
             }
+            // `module.GLOBAL`: a module-qualified read of an exported global
+            // (`export const`). The object names no local and no value; it is an
+            // import's module name, so the member alone identifies the global.
+            if (m.object && !m.computed && m.property &&
+                m.object->nodeType() == AST::NodeType::IdentifierExpr &&
+                m.property->nodeType() == AST::NodeType::IdentifierExpr) {
+                const std::string& qualifier =
+                    static_cast<const AST::IdentifierExpr&>(*m.object).name;
+                LocalInfo qli;
+                if (!lookupLocal(qualifier, qli) && !lookupGlobal(qualifier)) {
+                    const std::string& gname =
+                        static_cast<const AST::IdentifierExpr&>(*m.property).name;
+                    if (const Sema::GlobalInfo* g = lookupGlobal(gname)) {
+                        Types::TypeRef gt = g->type;
+                        VReg addr = globalAddr(*g);
+                        if (gt && (gt->kind == Types::Kind::Struct ||
+                                   gt->kind == Types::Kind::Class ||
+                                   gt->kind == Types::Kind::Array)) {
+                            return addr;  // aggregate: its address is the value
+                        }
+                        if (isFloatType(gt)) {
+                            VReg fv = fn_->newVReg(RegClass::XMM);
+                            emitFW(MOpcode::FLoadInd,
+                                   {MOperand::defVReg(fv), MOperand::useVReg(addr),
+                                    MOperand::immediate(0)},
+                                   floatWidthOf(gt));
+                            return fv;
+                        }
+                        VReg lv = fn_->newVReg();
+                        MInst ld{MOpcode::LoadInd,
+                                 {MOperand::defVReg(lv), MOperand::useVReg(addr),
+                                  MOperand::immediate(0)}};
+                        ld.width = static_cast<std::uint8_t>(widthOf(gt));
+                        ld.isSigned = isSignedOf(gt);
+                        emit(ld);
+                        return lv;
+                    }
+                }
+            }
             // `E.Variant` unit-variant value: build the tagged aggregate.
             const Sema::SumTypeInfo* st = nullptr;
             const Sema::SumVariant* v = nullptr;
@@ -3101,8 +3174,15 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
             }
             return selMemberLoad(m);
         }
-        case AST::NodeType::NewExpression:
-            return selNew(static_cast<const AST::NewExpression&>(*expr));
+        case AST::NodeType::NewExpression: {
+            const auto& ne = static_cast<const AST::NewExpression&>(*expr);
+            if (isSliceType(concreteTypeOf(&ne))) {
+                ElemAddr a = materializeNewSlice(ne);
+                if (failed_) return kInvalidVReg;
+                return materializeAddr(a);
+            }
+            return selNew(ne);
+        }
         case AST::NodeType::DeleteExpression:
             selDelete(static_cast<const AST::DeleteExpression&>(*expr));
             return kInvalidVReg;
@@ -5300,7 +5380,7 @@ VReg InstructionSelector::selCast(const AST::CastExpr& cast) {
         if (isFloatType(to)) {
             VReg res = fn_->newVReg(RegClass::XMM);
             emitFW(MOpcode::CvtI2F, {MOperand::defVReg(res), MOperand::useVReg(lo)},
-                   floatComputeWidthOf(to));
+                   floatComputeWidthOf(to), isSignedOf(from));
             return narrowToHalfIfNeeded(res, to);
         }
         std::uint8_t w = static_cast<std::uint8_t>(widthOf(to));
@@ -5339,7 +5419,7 @@ VReg InstructionSelector::selCast(const AST::CastExpr& cast) {
             // tag the destination float compute precision (f16 computes as f32).
             VReg res = fn_->newVReg(RegClass::XMM);
             emitFW(MOpcode::CvtI2F, {MOperand::defVReg(res), MOperand::useVReg(v)},
-                   floatComputeWidthOf(to));
+                   floatComputeWidthOf(to), isSignedOf(from));
             return narrowToHalfIfNeeded(res, to);
         }
         // float -> int (cvttsd2si / cvttss2si, truncating) into a GP vreg, then
@@ -5793,6 +5873,11 @@ InstructionSelector::materializeStructInstantiation(const AST::StructInstantiati
             fail("selector: unknown field '" + fv.name + "' in literal '" + lit.typeName + "'");
             return {};
         }
+        if (isSliceType(fieldTy)) {
+            VReg dst = materializeAddr(ElemAddr{baseAddr, off});
+            if (!emitSliceInitInto(dst, fieldTy, fv.value)) return {};
+            continue;
+        }
         // Nested aggregate field: materialize its address and copy by bytes.
         if (fieldTy &&
             (fieldTy->kind == Types::Kind::Struct || fieldTy->kind == Types::Kind::Class)) {
@@ -5842,8 +5927,11 @@ InstructionSelector::materializeArrayLiteral(const AST::ArrayLiteral& lit) {
 
     std::int64_t off = 0;
     for (const auto& e : lit.elements) {
-        // Nested aggregate element (array of structs / arrays): copy by bytes.
-        if (elemTy && (elemTy->kind == Types::Kind::Struct ||
+        // Slice elements need both words, including contextual array sources.
+        if (isSliceType(elemTy)) {
+            VReg dst = materializeAddr(ElemAddr{baseAddr, off});
+            if (!emitSliceInitInto(dst, elemTy, e)) return {};
+        } else if (elemTy && (elemTy->kind == Types::Kind::Struct ||
                        elemTy->kind == Types::Kind::Class ||
                        elemTy->kind == Types::Kind::Array)) {
             ElemAddr src = computeLValueAddr(e.get());
@@ -5882,18 +5970,10 @@ bool InstructionSelector::emitSliceInitInto(VReg destAddr, Types::TypeRef sliceT
         st.width = 8; st.isSigned = false;
         emit(st);
     };
-    // `new T[n]` / `new T`: the allocation pointer plus its element count.
+    // Handle new before the slice-copy path: this constructs in place and must
+    // not materialize the same allocation a second time via selExpr.
     if (init->nodeType() == AST::NodeType::NewExpression) {
-        VReg countV = kInvalidVReg;
-        VReg ptr = selNew(static_cast<const AST::NewExpression&>(*init), &countV);
-        if (failed_) return false;
-        storeField(0, ptr);
-        if (countV == kInvalidVReg) {
-            countV = fn_->newVReg();
-            emit({MOpcode::MovRI, {MOperand::defVReg(countV), MOperand::immediate(0)}});
-        }
-        storeField(8, countV);
-        return true;
+        return emitNewSliceInto(destAddr, static_cast<const AST::NewExpression&>(*init));
     }
     Types::TypeRef initTy = concreteTypeOf(init.get());
     // Another slice value: copy its 16-byte { ptr, len } header verbatim.
@@ -6060,8 +6140,34 @@ void InstructionSelector::appendSliceArgValue(Types::TypeRef sliceTy,
                              argIsAggMem, arg.get());
 }
 
+bool InstructionSelector::emitNewSliceInto(VReg destAddr, const AST::NewExpression& ne) {
+    if (!isSliceType(concreteTypeOf(&ne))) {
+        fail("selector: slice allocation requires new T[n]");
+        return false;
+    }
+    VReg count = kInvalidVReg;
+    VReg ptr = selNew(ne, &count);
+    if (failed_) return false;
+    // A failed allocation is an empty slice, not {null, a positive length}.
+    VReg len = boolify(ptr);
+    emit({MOpcode::IMul, {MOperand::useDefVReg(len), MOperand::useVReg(count)}});
+    storeHalf(destAddr, 0, ptr);
+    storeHalf(destAddr, 8, len);
+    return !failed_;
+}
+
+InstructionSelector::ElemAddr
+InstructionSelector::materializeNewSlice(const AST::NewExpression& ne) {
+    std::uint32_t slot = fn_->addFrameSlot(16, 8, false);
+    VReg addr = fn_->newVReg();
+    emit({MOpcode::LeaSlot, {MOperand::defVReg(addr), MOperand::slot(slot)}});
+    if (!emitNewSliceInto(addr, ne)) return {};
+    return ElemAddr{addr, 0};
+}
+
 VReg InstructionSelector::selNew(const AST::NewExpression& ne, VReg* arrayCountOut) {
-    // sema types `new T` and `new T[n]` both as `T*`. Allocate a 16-byte header
+    // Raw allocation helper for Pointer `new T` and Slice `new T[n]`.
+    // Allocate a 16-byte allocation header (distinct from a slice value)
     // followed by sizeOf(T) bytes per element. The user pointer skips the header:
     //   [base + 0] = element count
     //   [base + 8] = total allocation size
@@ -6070,7 +6176,12 @@ VReg InstructionSelector::selNew(const AST::NewExpression& ne, VReg* arrayCountO
     // allocation.
     Types::TypeRef ptrTy = concreteTypeOf(&ne);
     Types::TypeRef elemTy =
-        (ptrTy && ptrTy->kind == Types::Kind::Pointer) ? ptrTy->element : nullptr;
+        (ptrTy && (ptrTy->kind == Types::Kind::Pointer || isSliceType(ptrTy)))
+            ? ptrTy->element : nullptr;
+    if (!elemTy || elemTy->isError()) {
+        fail("selector: new has no concrete element type");
+        return kInvalidVReg;
+    }
 
     // Modern parsing leaves `new Cell[count](...)` as typeName == "Cell" plus
     // ne.arraySize. Keep the legacy suffix split for old/generated ASTs that may
@@ -6118,7 +6229,7 @@ VReg InstructionSelector::selNew(const AST::NewExpression& ne, VReg* arrayCountO
         elemSz = alignUp(off, maxAlign);
         if (elemSz == 0) elemSz = 1;
     } else {
-        elemSz = elemTy ? sizeOf(elemTy) : 1;
+        elemSz = sizeOf(elemTy);
         if (elemSz == 0) elemSz = 1;
     }
 
@@ -6250,6 +6361,15 @@ VReg InstructionSelector::selNew(const AST::NewExpression& ne, VReg* arrayCountO
 
     std::uint32_t initB = fn_->addBlock();
     std::uint32_t doneB = fn_->addBlock();
+
+    // Slice lengths are nonnegative i64 values. Reject negative signed counts
+    // and u64 counts beyond that range before attempting allocation.
+    emit({MOpcode::Cmp, {MOperand::useVReg(count), MOperand::useVReg(zero)}});
+    {
+        MInst jcc{MOpcode::Jcc, {MOperand::lbl(doneB)}};
+        jcc.cond = Cond::LT;
+        emit(jcc);
+    }
 
     // payload = elemSz * count; total = payload + header. If either operation
     // wraps, leave the result as null and skip allocation/header writes.
@@ -6395,13 +6515,24 @@ void InstructionSelector::selDelete(const AST::DeleteExpression& de) {
 
     Types::TypeRef ptrTy = concreteTypeOf(de.operand.get());
     Types::TypeRef elemTy =
-        (ptrTy && ptrTy->kind == Types::Kind::Pointer) ? ptrTy->element : nullptr;
+        (ptrTy && (ptrTy->kind == Types::Kind::Pointer || isSliceType(ptrTy)))
+            ? ptrTy->element : nullptr;
     if (!elemTy) {
-        fail("selector: delete operand must be a pointer");
+        fail("selector: delete operand must be a pointer or an allocation slice");
         return;
     }
 
-    VReg ptr = selExpr(de.operand);
+    // delete accepts the original allocation pointer or its full slice. Slices
+    // are non-owning views: freeing a sub-slice/stack array remains invalid, just
+    // as freeing an interior/raw non-allocation pointer is invalid.
+    VReg ptr;
+    if (isSliceType(ptrTy)) {
+        ElemAddr header = computeLValueAddr(de.operand.get());
+        if (failed_) return;
+        ptr = loadHalf(materializeAddr(header), 0);
+    } else {
+        ptr = selExpr(de.operand);
+    }
     if (failed_) return;
 
     // `delete null` is a no-op.
@@ -6641,6 +6772,13 @@ InstructionSelector::computeLValueAddr(const AST::ExprAST* node) {
             // header; its address backs the slice rvalue.
             return materializeSliceExpr(static_cast<const AST::SliceExpr&>(*node));
         }
+        case AST::NodeType::NewExpression: {
+            if (isSliceType(concreteTypeOf(node))) {
+                return materializeNewSlice(static_cast<const AST::NewExpression&>(*node));
+            }
+            fail("selector: scalar new is a pointer, not an aggregate lvalue");
+            return {};
+        }
         default:
             fail("selector: expression is not an addressable lvalue");
             return {};
@@ -6652,6 +6790,29 @@ VReg InstructionSelector::selMemberLoad(const AST::MemberAccessExpr& m) {
     // `[base + disp]`. The displacement (constant index scaling + field offset)
     // folds into the load's own memory operand.
     Types::TypeRef resultTy = concreteTypeOf(&m);
+    // `.ptr` / `.len` member shortcuts that are values, not field loads:
+    //   * `.ptr` on a fixed array -- the array's own storage address.
+    //   * `.len` on a fixed array -- the compile-time element count.
+    if (!m.computed && m.property &&
+        m.property->nodeType() == AST::NodeType::IdentifierExpr) {
+        const std::string& field =
+            static_cast<const AST::IdentifierExpr&>(*m.property).name;
+        Types::TypeRef objTy = concreteTypeOf(m.object.get());
+        if (objTy && objTy->kind == Types::Kind::Array) {
+            if (field == "ptr") {
+                ElemAddr a = computeLValueAddr(m.object.get());
+                if (failed_) return kInvalidVReg;
+                return materializeAddr(a);
+            }
+            if (field == "len") {
+                VReg v = fn_->newVReg();
+                emit({MOpcode::MovRI,
+                      {MOperand::defVReg(v),
+                       MOperand::immediate(objTy->arrayLength)}});
+                return v;
+            }
+        }
+    }
     ElemAddr a = computeLValueAddr(&m);
     if (failed_) return kInvalidVReg;
     if (isFloatType(resultTy)) {

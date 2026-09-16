@@ -669,8 +669,14 @@ bool linkExecutable(const LinkOptions& options) {
     // crt1.o supplies `_start` and calls our `main`; libc.so is mlibc.
     if (options.target.isInstantOS) {
         if (sysroot.empty()) {
+            if (const char* env = std::getenv("INSTY_MLIBC_SYSROOT")) {
+                sysroot = env;
+            }
+        }
+        if (sysroot.empty()) {
             std::cerr << "Error: InstantOS link requires an mlibc sysroot "
-                         "(set --sysroot or the target's sysroot)\n";
+                         "(pass --sysroot, set INSTY_MLIBC_SYSROOT, or put "
+                         "tools/mlibc-root next to the compiler)\n";
             return false;
         }
         const std::string libDir = sysroot + "/lib";

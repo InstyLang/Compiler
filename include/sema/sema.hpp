@@ -61,6 +61,10 @@ struct GlobalInfo {
     Types::TypeRef type = nullptr;
     bool isConst = false;
     bool isExported = false;
+    // True when this record came from an imported module rather than being
+    // declared here. The owning module emits the definition; this module only
+    // references it, so the backend must not emit a second definition.
+    bool isImported = false;
 };
 
 // One variant of a tagged-union (sum-type) enum: its name, discriminant tag, and
@@ -154,7 +158,8 @@ public:
                        const std::vector<EnumInfo>& importedEnums = {},
                        const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
                        const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
-                       const std::vector<SumTypeInfo>& importedSumTypes = {});
+                       const std::vector<SumTypeInfo>& importedSumTypes = {},
+                       const std::vector<GlobalInfo>& importedGlobals = {});
 
 private:
     class Impl;

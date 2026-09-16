@@ -160,11 +160,9 @@ inline const TargetSpec& targetSpecForKind(TargetKind kind) {
         // InstantOS userland binaries are dynamically-linked PIEs that run on top
         // of mlibc + the ld-instantos.so runtime loader. The program supplies
         // `main`; crt1.o (from the sysroot) provides `_start`. The dynamic linker
-        // path is embedded as PT_INTERP. The sysroot default points at the
-        // mlibc-root produced by InstantOS's tools/build-mlibc.sh; override with
-        // --sysroot.
+        // path is embedded as PT_INTERP. Pass --sysroot or set INSTY_MLIBC_SYSROOT
+        // to the mlibc-root produced by InstantOS's tools/build-mlibc.sh.
         spec.dynamicLinker = "/lib/mlibc/ld-instantos.so";
-        spec.sysroot = "C:/Users/Administrator/projects/InstantOS/.bash-cache/mlibc-root";
         return spec;
     }();
     static const TargetSpec wasm32Spec = []() {
