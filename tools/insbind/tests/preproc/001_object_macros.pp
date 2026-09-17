@@ -1,0 +1,19 @@
+#file "001_object_macros.c"
+3:1 kw_int int
+3:5 Identifier a
+3:7 Assign =
+2:16 LParen (
+1:15 IntLiteral 80
+2:23 Slash /
+2:25 IntLiteral 2
+2:26 RParen )
+3:15 Semicolon ;
+6:1 kw_int int
+6:5 Identifier b
+6:7 Assign =
+2:16 LParen (
+5:15 IntLiteral 100
+2:23 Slash /
+2:25 IntLiteral 2
+2:26 RParen )
+6:15 Semicolon ;

@@ -1,0 +1,9 @@
+typedef A = s32
+typedef B = ptr(s32)
+typedef C = s32[4]
+typedef uLong = u32
+typedef uLongLongDistance = uLong
+typedef Handler = fn(s32) -> s32
+typedef HandlerPtr = ptr(Handler)
+typedef StringTable = ptr(ptr(s8))
+fun distance(uLongLongDistance extra, HandlerPtr on_done) -> uLong

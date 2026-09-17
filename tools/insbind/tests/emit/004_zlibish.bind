@@ -1,0 +1,3 @@
+module=zlib
+dll=zlib1.dll
+abi-check=1

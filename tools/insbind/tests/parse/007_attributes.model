@@ -1,0 +1,8 @@
+fun imported_fn(s32 x) -> s32
+global imported_var: s32 [extern]
+fun visible() -> s32
+fun win_style(s32 a, s32 b) -> void
+fun c_style() -> s32
+fun max2(s32 a, s32 b) -> s32 [static-inline]
+fun with_body() -> void [static-inline]
+fun after() -> s32

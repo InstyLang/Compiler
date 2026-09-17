@@ -1,0 +1,154 @@
+module main
+
+import std::io
+
+export struct Point {
+    i32 x,
+    i32 y
+}
+
+export struct [align(4)] Bits {
+    u8[4] _data
+}
+
+export fun bits_as_int(Bits* u) -> i32* {
+    unsafe {
+        return cast<i32*>(u)
+    }
+}
+
+export fun bits_as_float(Bits* u) -> f32* {
+    unsafe {
+        return cast<f32*>(u)
+    }
+}
+
+export fun bits_bytes(Bits* u) -> u8* {
+    unsafe {
+        return cast<u8*>(u)
+    }
+}
+
+export struct Flags {
+    u32 _bf0
+}
+
+export fun flags_a(Flags* s) -> u32 {
+    unsafe {
+        return s._bf0 & 0x1
+    }
+}
+
+export fun flags_b(Flags* s) -> u32 {
+    unsafe {
+        return (s._bf0 >> 1) & 0x7
+    }
+}
+
+export fun flags_c(Flags* s) -> u32 {
+    unsafe {
+        return (s._bf0 >> 8) & 0x3
+    }
+}
+
+export struct Node {
+    Node* next,
+    i32 value
+}
+
+// warning: record 'Aligned' has an over-aligned field (_Alignas); Insty lays it
+// out differently than C. Do not pass it by value.
+export struct [align(16)] Aligned {
+    i8 c,
+    i32 v
+}
+
+export struct [align(4)] _anon_0 {
+    u8[4] _data
+}
+
+export fun _anon_0_as_int(_anon_0* u) -> i32* {
+    unsafe {
+        return cast<i32*>(u)
+    }
+}
+
+export fun _anon_0_as_float(_anon_0* u) -> f32* {
+    unsafe {
+        return cast<f32*>(u)
+    }
+}
+
+export struct Outer {
+    i32 tag,
+    _anon_0 _u
+}
+
+fun main() -> i32 {
+    i32 fails = 0
+    unsafe {
+        if Point.insize != 8 {
+            io.println("FAIL Point.insize != 8")
+            fails = fails + 1
+        }
+        Point _chk_Point0
+        if cast<u64>(&(_chk_Point0).x) - cast<u64>(&(_chk_Point0)) != 0 {
+            io.println("FAIL Point.x offset != 0")
+            fails = fails + 1
+        }
+        Point _chk_Point1
+        if cast<u64>(&(_chk_Point1).y) - cast<u64>(&(_chk_Point1)) != 4 {
+            io.println("FAIL Point.y offset != 4")
+            fails = fails + 1
+        }
+        if Bits.insize != 4 {
+            io.println("FAIL Bits.insize != 4")
+            fails = fails + 1
+        }
+        if Flags.insize != 4 {
+            io.println("FAIL Flags.insize != 4")
+            fails = fails + 1
+        }
+        Flags _chk_Flags0
+        if cast<u64>(&(_chk_Flags0)._bf0) - cast<u64>(&(_chk_Flags0)) != 0 {
+            io.println("FAIL Flags._bf0 offset != 0")
+            fails = fails + 1
+        }
+        if Node.insize != 16 {
+            io.println("FAIL Node.insize != 16")
+            fails = fails + 1
+        }
+        Node _chk_Node0
+        if cast<u64>(&(_chk_Node0).next) - cast<u64>(&(_chk_Node0)) != 0 {
+            io.println("FAIL Node.next offset != 0")
+            fails = fails + 1
+        }
+        Node _chk_Node1
+        if cast<u64>(&(_chk_Node1).value) - cast<u64>(&(_chk_Node1)) != 8 {
+            io.println("FAIL Node.value offset != 8")
+            fails = fails + 1
+        }
+        if _anon_0.insize != 4 {
+            io.println("FAIL _anon_0.insize != 4")
+            fails = fails + 1
+        }
+        if Outer.insize != 8 {
+            io.println("FAIL Outer.insize != 8")
+            fails = fails + 1
+        }
+        Outer _chk_Outer0
+        if cast<u64>(&(_chk_Outer0).tag) - cast<u64>(&(_chk_Outer0)) != 0 {
+            io.println("FAIL Outer.tag offset != 0")
+            fails = fails + 1
+        }
+        Outer _chk_Outer1
+        if cast<u64>(&(_chk_Outer1)._u) - cast<u64>(&(_chk_Outer1)) != 4 {
+            io.println("FAIL Outer._u offset != 4")
+            fails = fails + 1
+        }
+    }
+    if fails == 0 {
+        io.println("abi-check: all layouts match")
+    }
+    return fails
+}

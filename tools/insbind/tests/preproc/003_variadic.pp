@@ -1,0 +1,25 @@
+#file "003_variadic.c"
+3:1 kw_int int
+3:5 Identifier a
+3:7 Assign =
+1:20 Identifier count
+1:25 LParen (
+3:15 IntLiteral 1
+3:18 Comma ,
+3:18 IntLiteral 2
+3:21 Comma ,
+3:21 IntLiteral 3
+1:37 RParen )
+3:23 Semicolon ;
+4:1 kw_int int
+4:5 Identifier b
+4:7 Assign =
+4:14 Identifier sum
+2:29 LParen (
+4:19 IntLiteral 4
+4:22 Comma ,
+4:22 IntLiteral 5
+2:41 Comma ,
+2:43 IntLiteral 0
+2:44 RParen )
+4:24 Semicolon ;

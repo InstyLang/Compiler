@@ -1,0 +1,11 @@
+1:1 StringLiteral "hello"
+1:9 StringLiteral "esc\"ape"
+1:20 CharLiteral 'a'
+1:24 CharLiteral '\n'
+1:29 StringLiteral "adjacent"
+1:40 StringLiteral "strings"
+2:1 StringLiteral L"wide"
+2:9 StringLiteral u8"utf8"
+2:18 CharLiteral u'x'
+2:23 CharLiteral U'y'
+2:28 CharLiteral L'z'

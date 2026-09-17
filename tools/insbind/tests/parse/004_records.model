@@ -1,0 +1,37 @@
+record Point {
+  x: s32
+  y: s32
+}
+global origin: record Point
+union Bits {
+  as_int: s32
+  as_float: f32
+  bytes: u8[4]
+}
+record Node {
+  next: ptr(record Node)
+  value: s32
+}
+record Flags {
+  a: u32 : 1
+  b: u32 : 3
+  (pad): u32 : 4
+  c: u32 : 2
+}
+record Error {
+  code: s32
+  message: ptr(s8)
+}
+typedef Error = record Error
+union _anon_1 {
+  as_int: s32
+  as_float: f32
+}
+record Outer {
+  tag: s32
+  (anon): record _anon_1
+}
+record Aligned align(16) {
+  c: s8
+  v: s32
+}

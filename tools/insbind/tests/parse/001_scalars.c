@@ -1,0 +1,15 @@
+typedef char c1;
+typedef signed char c2;
+typedef unsigned char c3;
+typedef short s1;
+typedef unsigned short s2;
+typedef int i1;
+typedef unsigned int i2;
+typedef long l1;
+typedef unsigned long l2;
+typedef long long ll1;
+typedef unsigned long long ll2;
+typedef float f1;
+typedef double f2;
+typedef _Bool b1;
+void nothing(void);

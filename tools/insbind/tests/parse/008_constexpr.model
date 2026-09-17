@@ -1,0 +1,24 @@
+enum Level {
+  Low = 1
+  Mid = 4
+  High = 16
+}
+global buf1: s32[4096]
+global buf2: s32[2056]
+global buf3: s32[32]
+global buf4: s32[1024]
+global buf5: s32[65]
+enum Mask {
+  Read = 1
+  Write = 2
+  Exec = 4
+  All = 7
+}
+enum Neg {
+  Down = -1
+  Up = 1
+}
+record S {
+  flags: u32 : 4
+  pad: s8[12]
+}

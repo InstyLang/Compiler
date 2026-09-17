@@ -1,0 +1,22 @@
+typedef size_t = u64
+typedef ptrdiff_t = s64
+typedef wchar_t = u16
+typedef uLong = u32
+typedef voidpf = ptr(void)
+typedef alloc_func = ptr(fn(voidpf opaque, u32 items, u32 size) -> voidpf)
+typedef free_func = ptr(fn(voidpf opaque, voidpf address) -> void)
+record z_stream_s {
+  next_in: ptr(u8)
+  avail_in: u32
+  total_in: uLong
+  next_out: ptr(u8)
+  avail_out: u32
+  msg: ptr(s8)
+  opaque: voidpf
+  zalloc: alloc_func
+  zfree: free_func
+}
+typedef z_stream = record z_stream_s
+fun compressBound(uLong sourceLen) -> uLong
+fun deflate(ptr(z_stream) strm, s32 flush) -> s32
+fun deflateEnd(ptr(z_stream) strm) -> s32

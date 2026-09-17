@@ -1,0 +1,9 @@
+fun add(s32 a, s32 b) -> s32
+fun noargs() -> void
+fun really_noargs() -> void
+fun name_of(s32 id, ptr(s8) fallback) -> ptr(s8)
+fun binary_op(s32 kind) -> ptr(fn(s32, s32) -> s32)
+fun signal(s32 sig, ptr(fn(s32) -> void) handler) -> ptr(fn(s32) -> void)
+fun printf_like(ptr(s8) fmt, ...) -> s32
+typedef comparator = ptr(fn(ptr(void) a, ptr(void) b) -> s32)
+fun sort_with(ptr(void) base, u32 count, u32 size, comparator cmp) -> void

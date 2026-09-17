@@ -1,0 +1,14 @@
+1:1 kw_extern extern
+1:8 kw_struct struct
+1:15 Identifier external
+1:24 Identifier structural
+1:35 kw_while while
+1:41 kw__Static_assert _Static_assert
+1:56 kw_unsigned unsigned
+1:65 kw_union union
+2:1 kw_int int
+2:5 Identifier int32
+2:11 Identifier bool
+2:16 kw__Bool _Bool
+2:22 kw_restrict restrict
+2:31 kw_inline inline

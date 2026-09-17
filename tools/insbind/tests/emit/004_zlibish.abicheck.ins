@@ -1,0 +1,112 @@
+module main
+
+import std::io
+
+// typedef size_t = u64
+
+// typedef ptrdiff_t = i64
+
+// typedef wchar_t = u16
+
+// typedef uLong = u32
+
+// typedef voidpf = void*
+
+// typedef alloc_func = u64
+
+// typedef free_func = u64
+
+export struct z_stream_s {
+    u8* next_in,
+    u32 avail_in,
+    u32 total_in,
+    u8* next_out,
+    u32 avail_out,
+    text msg,
+    void* opaque,
+    u64 zalloc,
+    u64 zfree
+}
+
+// typedef z_stream = z_stream_s
+
+export extern fun [dll("zlib1.dll")] compressBound(u32 sourceLen) -> u32
+
+export extern fun [dll("zlib1.dll")] deflate(z_stream_s* strm, i32 flush) -> i32
+
+export extern fun [dll("zlib1.dll")] deflateEnd(z_stream_s* strm) -> i32
+
+export fun z_null() -> i64 {
+    return 0
+}
+
+export fun z_ok() -> i64 {
+    return 0
+}
+
+export fun z_stream_end() -> i64 {
+    return 1
+}
+
+export fun z_finish() -> i64 {
+    return 4
+}
+
+fun main() -> i32 {
+    i32 fails = 0
+    unsafe {
+        if z_stream_s.insize != 64 {
+            io.println("FAIL z_stream_s.insize != 64")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s0
+        if cast<u64>(&(_chk_z_stream_s0).next_in) - cast<u64>(&(_chk_z_stream_s0)) != 0 {
+            io.println("FAIL z_stream_s.next_in offset != 0")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s1
+        if cast<u64>(&(_chk_z_stream_s1).avail_in) - cast<u64>(&(_chk_z_stream_s1)) != 8 {
+            io.println("FAIL z_stream_s.avail_in offset != 8")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s2
+        if cast<u64>(&(_chk_z_stream_s2).total_in) - cast<u64>(&(_chk_z_stream_s2)) != 12 {
+            io.println("FAIL z_stream_s.total_in offset != 12")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s3
+        if cast<u64>(&(_chk_z_stream_s3).next_out) - cast<u64>(&(_chk_z_stream_s3)) != 16 {
+            io.println("FAIL z_stream_s.next_out offset != 16")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s4
+        if cast<u64>(&(_chk_z_stream_s4).avail_out) - cast<u64>(&(_chk_z_stream_s4)) != 24 {
+            io.println("FAIL z_stream_s.avail_out offset != 24")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s5
+        if cast<u64>(&(_chk_z_stream_s5).msg) - cast<u64>(&(_chk_z_stream_s5)) != 32 {
+            io.println("FAIL z_stream_s.msg offset != 32")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s6
+        if cast<u64>(&(_chk_z_stream_s6).opaque) - cast<u64>(&(_chk_z_stream_s6)) != 40 {
+            io.println("FAIL z_stream_s.opaque offset != 40")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s7
+        if cast<u64>(&(_chk_z_stream_s7).zalloc) - cast<u64>(&(_chk_z_stream_s7)) != 48 {
+            io.println("FAIL z_stream_s.zalloc offset != 48")
+            fails = fails + 1
+        }
+        z_stream_s _chk_z_stream_s8
+        if cast<u64>(&(_chk_z_stream_s8).zfree) - cast<u64>(&(_chk_z_stream_s8)) != 56 {
+            io.println("FAIL z_stream_s.zfree offset != 56")
+            fails = fails + 1
+        }
+    }
+    if fails == 0 {
+        io.println("abi-check: all layouts match")
+    }
+    return fails
+}
