@@ -147,7 +147,9 @@ std::string runCase(const std::filesystem::path& cfile,
     PreprocessResult pp = preprocess(opts);
     if (mode.kind == CaseMode::Preproc) return dumpPreprocessed(pp);
 
-    ParseResult model = parse(pp.tokens, parseOptionsFor(opts.target));
+    ParseOptions popts = parseOptionsFor(opts.target);
+    popts.files = &pp.files;
+    ParseResult model = parse(pp.tokens, popts);
     for (const std::string& e : pp.errors)
         model.errors.insert(model.errors.begin(), "preproc: " + e);
     if (mode.kind == CaseMode::Parse) return dumpModel(model);

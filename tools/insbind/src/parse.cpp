@@ -53,10 +53,19 @@ private:
         return false;
     }
     void error(const std::string& msg) {
-        result_.errors.push_back(std::to_string(peek().line) + ": " + msg);
+        result_.errors.push_back(location() + msg);
     }
     void warn(const std::string& msg) {
-        result_.warnings.push_back(std::to_string(peek().line) + ": " + msg);
+        result_.warnings.push_back(location() + msg);
+    }
+    std::string location() const {
+        std::string out;
+        if (opts_.files && peek().file < opts_.files->size()) {
+            const std::string& p = (*opts_.files)[peek().file];
+            const std::size_t slash = p.find_last_of("/\\");
+            out = (slash == std::string::npos ? p : p.substr(slash + 1)) + ":";
+        }
+        return out + std::to_string(peek().line) + ": ";
     }
 
     std::uint32_t addType(CType t) {
@@ -503,6 +512,10 @@ private:
     // (it decides pointeeIsConst on the innermost pointer).
     std::uint32_t parseDeclarator(std::uint32_t base, std::string& name,
                                   bool baseIsConst = false) {
+        // Calling-convention keywords may appear anywhere in a declarator
+        // (void (__cdecl *fn)(args)); they mean nothing to the FFI.
+        bool dummyInline = false;
+        while (skipAttribute(dummyInline)) {}
         bool firstWrap = true;
         while (at(TokenKind::Star)) {
             ++pos_;
@@ -512,6 +525,7 @@ private:
                 starConst = starConst || at(TokenKind::kw_const);
                 ++pos_;
             }
+            while (skipAttribute(dummyInline)) {}
             const bool pointeeConst = firstWrap ? baseIsConst : starConst;
             firstWrap = false;
             const std::uint32_t ptr = pointerTo(base);

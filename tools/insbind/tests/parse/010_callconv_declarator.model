@@ -1,0 +1,3 @@
+typedef handler = ptr(fn(s32 code) -> void)
+fun win_fn() -> s32
+fun fn_ptr_user(s32) -> s32

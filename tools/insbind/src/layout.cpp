@@ -138,19 +138,22 @@ RecordLayout LayoutEngine::record(std::uint32_t recordIdx) {
             }
 
             if (needNewUnit) {
+                // A bitfield storage unit is atomic: it occupies its full
+                // declared size in the layout no matter how few bits the run
+                // uses, so the NEXT field starts after the whole unit.
                 offset = alignUp(offset, ftAlign);
                 unitOpen = true;
                 unitBitsTotal = ftBits;
                 unitBitsUsed = 0;
                 unitOffset = offset;
                 unitTypeIdx = f.type;
+                offset += ftSize;
             }
             fl.unitOffset = unitOffset;
             fl.unitSize = ftSize;
             fl.bitOffset = unitBitsUsed;
             fl.offset = unitOffset;
             unitBitsUsed += f.bits;
-            offset = unitOffset + (unitBitsUsed + 7) / 8;
             continue;
         }
 

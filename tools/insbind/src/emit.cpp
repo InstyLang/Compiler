@@ -65,15 +65,26 @@ struct Emitter {
                      " skipped");
                 return "";
             case CTypeKind::Pointer: {
-                const CType& target = m.types[t.target];
-                if (target.kind == CTypeKind::Function) return "u64";
-                if (target.kind == CTypeKind::Record &&
-                    m.records[target.target].incomplete) {
-                    return "u64"; // opaque handle convention
+                // Resolve typedef chains on the pointee before judging:
+                // ptr-to-function -> u64, ptr-to-incomplete-record -> u64
+                // (the opaque-handle convention), const char -> text.
+                const CType* target = &m.types[t.target];
+                while (target->kind == CTypeKind::TypedefRef &&
+                       target->target != kNoType) {
+                    target = &m.types[target->target];
                 }
-                if (target.kind == CTypeKind::Void) return "void*";
-                if (target.kind == CTypeKind::Int && target.bits == 8 &&
-                    target.isSigned) {
+                if (target->kind == CTypeKind::Function) return "u64";
+                if (target->kind == CTypeKind::Record &&
+                    m.records[target->target].incomplete) {
+                    return "u64";
+                }
+                if (target->kind == CTypeKind::Void) return "void*";
+                // Pointer to array: Insty has no T[N]* spelling; a pointer to
+                // the element type is the same address (C-idiomatic).
+                if (target->kind == CTypeKind::Array)
+                    return ty(target->target, context) + "*";
+                if (target->kind == CTypeKind::Int && target->bits == 8 &&
+                    target->isSigned) {
                     return t.pointeeIsConst ? "text" : "u8*";
                 }
                 return ty(t.target, context) + "*";
@@ -268,12 +279,26 @@ struct Emitter {
         const std::string base =
             (isSigned ? "i" : "u") + std::to_string(bits);
         std::string out = "export enum " + def.name + " : " + base + " {\n";
+        std::string deferred;
+        bool first = true;
         for (std::size_t i = 0; i < def.values.size(); ++i) {
-            out += "    " + def.values[i].first + " = " +
-                   std::to_string(def.values[i].second);
-            out += i + 1 < def.values.size() ? ",\n" : "\n";
+            const auto& [name, value] = def.values[i];
+            // Insty enum variant values must be non-negative literals:
+            // negative ones become constant accessors after the enum.
+            if (value < 0) {
+                deferred += "export fun " + lower(def.name) + "_" + lower(name) +
+                            "() -> " + base + " {\n";
+                deferred += "    return " + std::to_string(value) + "\n";
+                deferred += "}\n\n";
+                continue;
+            }
+            if (!first) out += ",\n";
+            out += "    " + name + " = " + std::to_string(value);
+            first = false;
         }
+        out += first ? "    _unused\n" : "\n";
         out += "}\n\n";
+        out += deferred;
         return out;
     }
 
@@ -322,8 +347,17 @@ struct Emitter {
             values[name] = value; // last definition wins
         }
         for (const std::string& name : order) {
-            out += "export fun " + lower(name) + "() -> i64 {\n";
-            out += "    return " + std::to_string(values[name]) + "\n";
+            // C integer constants are int-valued in practice: i32 when the
+            // value fits (so they pass straight into i32 parameters), i64
+            // beyond that, u64 when even i64 cannot hold it.
+            const std::int64_t v = values[name];
+            const std::string rt =
+                (v >= -2147483648LL && v <= 2147483647LL) ? "i32"
+                : (v >= -9223372036854775807LL - 1 && static_cast<std::uint64_t>(v) <= 9223372036854775807ULL)
+                      ? "i64"
+                      : "u64";
+            out += "export fun " + lower(name) + "() -> " + rt + " {\n";
+            out += "    return " + std::to_string(v) + "\n";
             out += "}\n\n";
         }
         return out;

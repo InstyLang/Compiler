@@ -36,19 +36,19 @@ export extern fun [dll("zlib1.dll")] deflate(z_stream_s* strm, i32 flush) -> i32
 
 export extern fun [dll("zlib1.dll")] deflateEnd(z_stream_s* strm) -> i32
 
-export fun z_null() -> i64 {
+export fun z_null() -> i32 {
     return 0
 }
 
-export fun z_ok() -> i64 {
+export fun z_ok() -> i32 {
     return 0
 }
 
-export fun z_stream_end() -> i64 {
+export fun z_stream_end() -> i32 {
     return 1
 }
 
-export fun z_finish() -> i64 {
+export fun z_finish() -> i32 {
     return 4
 }
 

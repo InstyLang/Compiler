@@ -94,6 +94,8 @@ struct ParseOptions {
     // LLP64 for x86_64_windows, LP64 for x86_64_linux.
     unsigned longBits = 32;
     unsigned longDoubleBits = 64;
+    // The preprocessor's file table, for file-attributed diagnostics.
+    const std::vector<std::string>* files = nullptr;
 };
 
 struct ParseResult {

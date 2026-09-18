@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -164,6 +165,7 @@ int main(int argc, char** argv) {
             popts.longBits = 64;
             popts.longDoubleBits = 80;
         }
+        popts.files = &pp.files;
         insbind::ParseResult model = insbind::parse(pp.tokens, popts);
         std::cout << insbind::dumpModel(model);
         for (const std::string& e : pp.errors)
@@ -196,6 +198,7 @@ int main(int argc, char** argv) {
         insbind::ParseOptions popts;
         popts.longBits = windows ? 32 : 64;
         popts.longDoubleBits = windows ? 64 : 80;
+        popts.files = &pp.files;
         const insbind::ParseResult model = insbind::parse(pp.tokens, popts);
         for (const std::string& e : model.errors)
             std::cerr << "error: " << e << "\n";
@@ -204,8 +207,22 @@ int main(int argc, char** argv) {
         emitOpts.macros = &pp.objectMacros;
         const insbind::EmitResult emitted = insbind::emit(model, emitOpts);
         std::cout << emitted.bindings;
-        for (const std::string& w : emitted.warnings)
-            std::cerr << "warning: " << w << "\n";
+        // Aggregate repeated warning kinds: a header like gl.h produces a
+        // thousand identical "extern global skipped" notes, which is spam.
+        {
+            std::map<std::string, int> counts;
+            for (const std::string& w : emitted.warnings) {
+                const std::size_t colon = w.find(':');
+                counts[colon == std::string::npos ? w : w.substr(0, colon)]++;
+            }
+            for (const auto& [kind, count] : counts) {
+                if (count == 1) {
+                    std::cerr << "warning: " << kind << "\n";
+                } else {
+                    std::cerr << "warning: " << kind << " (x" << count << ")\n";
+                }
+            }
+        }
         if (emitOpts.abiCheck) {
             const std::string path = emitOpts.moduleName + ".abicheck.ins";
             std::ofstream out(path, std::ios::binary | std::ios::trunc);

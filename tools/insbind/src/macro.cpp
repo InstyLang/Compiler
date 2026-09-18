@@ -97,6 +97,15 @@ std::vector<Token> Expander::expandLine(const std::vector<Token>& tokens) {
     return expandTokens(tokens, hideset);
 }
 
+Expander::Expansion Expander::expandLineEx(const std::vector<Token>& tokens) {
+    needsMore_ = false;
+    std::vector<std::string> hideset;
+    Expansion ex;
+    ex.tokens = expandTokens(tokens, hideset);
+    ex.needsMore = needsMore_;
+    return ex;
+}
+
 std::vector<Token> Expander::expandTokens(const std::vector<Token>& tokens,
                                           std::vector<std::string>& hideset) {
     std::vector<Token> out;
@@ -199,7 +208,10 @@ bool Expander::gatherArgs(const Macro& macro, const std::vector<Token>& tokens,
         }
     }
     if (depth != 0) {
-        diagnose(errLine, "unterminated macro invocation");
+        // The token stream ends inside the invocation: it may continue on the
+        // next physical line. Report up (no diagnostic yet) so the driver can
+        // append more tokens and retry; only EOF makes it a hard error.
+        needsMore_ = true;
         return false;
     }
     // F() supplies zero arguments to a zero-parameter macro, one (empty)

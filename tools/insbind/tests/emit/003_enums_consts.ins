@@ -19,35 +19,38 @@ export enum Mask : i32 {
 }
 
 export enum Negative : i32 {
-    ErrA = -3,
     Ok = 0
+}
+
+export fun negative_erra() -> i32 {
+    return -3
 }
 
 export extern fun [dll("m3.dll")] zlibVersion() -> i32
 
 export extern fun [dll("m3.dll")] deflate(i32 level) -> i32
 
-export fun z_no_compression() -> i64 {
+export fun z_no_compression() -> i32 {
     return 0
 }
 
-export fun z_best_speed() -> i64 {
+export fun z_best_speed() -> i32 {
     return 1
 }
 
-export fun z_best_compression() -> i64 {
+export fun z_best_compression() -> i32 {
     return 9
 }
 
-export fun z_default_compression() -> i64 {
+export fun z_default_compression() -> i32 {
     return -1
 }
 
-export fun z_block() -> i64 {
+export fun z_block() -> i32 {
     return 32
 }
 
-export fun z_null() -> i64 {
+export fun z_null() -> i32 {
     return 0
 }
 

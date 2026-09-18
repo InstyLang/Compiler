@@ -47,10 +47,21 @@ public:
     // ordinary identifier.
     std::vector<Token> expandLine(const std::vector<Token>& tokens);
 
+    // Same, for invocations that may SPAN lines (PNG_CALLBACK-style):
+    // reports needsMore = true when the input ends inside an unterminated
+    // macro invocation, so the driver can append the next line and retry.
+    // The result on needsMore is a partial expansion the caller may discard.
+    struct Expansion {
+        std::vector<Token> tokens;
+        bool needsMore = false;
+    };
+    Expansion expandLineEx(const std::vector<Token>& tokens);
+
 private:
     MacroTable& table_;
     std::string fileName_;
     std::vector<std::string>& errors_;
+    bool needsMore_ = false;
 
     std::vector<Token> expandTokens(const std::vector<Token>& tokens,
                                     std::vector<std::string>& hideset);

@@ -128,16 +128,12 @@ private:
             fs::weakly_canonical(fs::path(path), ec).string();
         const std::string& key = ec ? path : canonical;
 
-        for (const std::string& active : includeStack_) {
-            if (active == key) {
-                result_.errors.push_back(displayName(path) +
-                                         ": include cycle detected");
-                return;
-            }
-        }
         for (const std::string& once : pragmaOnce_)
             if (once == key) return;
 
+        // Re-including a file that is already on the stack is legal C: its
+        // include guard makes the second expansion empty. Genuinely
+        // unguarded mutual recursion is caught by the depth limit instead.
         if (depth > 100) {
             result_.errors.push_back(displayName(path) +
                                      ": include depth limit exceeded");
@@ -211,7 +207,32 @@ private:
             const bool isDirective = line[0].kind == TokenKind::Hash;
             if (!isDirective) {
                 if (!currentActive()) continue;
-                std::vector<Token> expanded = expander.expandLine(line);
+                // Expand, joining following physical lines while a macro
+                // invocation remains unterminated (PNG_CALLBACK-style).
+                std::vector<Token> group = std::move(line);
+                std::vector<Token> expanded;
+                for (;;) {
+                    auto ex = expander.expandLineEx(group);
+                    if (!ex.needsMore) {
+                        expanded = std::move(ex.tokens);
+                        break;
+                    }
+                    if (i >= tokens.size()) {
+                        result_.errors.push_back(
+                            disp + ":" +
+                            std::to_string(group.empty() ? 0 : group[0].line) +
+                            ": unterminated macro invocation");
+                        expanded = std::move(ex.tokens);
+                        break;
+                    }
+                    // Append the next logical line and retry the whole group.
+                    std::size_t j = i + 1;
+                    while (j < tokens.size() && !tokens[j].atLineStart) ++j;
+                    group.insert(group.end(),
+                                 tokens.begin() + static_cast<long long>(i),
+                                 tokens.begin() + static_cast<long long>(j));
+                    i = j;
+                }
                 for (Token& t : expanded) t.file = fileIdx;
                 if (!expanded.empty()) expanded.front().atLineStart = true;
                 result_.tokens.insert(result_.tokens.end(), expanded.begin(),
