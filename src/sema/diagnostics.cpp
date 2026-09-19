@@ -83,6 +83,10 @@ bool Checker::isFloatLiteral(const AST::NodePtr& node) const {
     switch (node->nodeType()) {
         case AST::NodeType::FloatLiteral:
             return true;
+        case AST::NodeType::BinaryOperation: {
+            auto* bin = static_cast<AST::BinaryOperationExpr*>(node.get());
+            return isFloatLiteral(bin->lhs) && isFloatLiteral(bin->rhs);
+        }
         case AST::NodeType::UnaryExpr: {
             auto* un = static_cast<AST::UnaryExpr*>(node.get());
             return isFloatLiteral(un->operand);
