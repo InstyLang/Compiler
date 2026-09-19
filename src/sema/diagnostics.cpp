@@ -78,6 +78,20 @@ bool Checker::isIntLiteral(const AST::NodePtr& node) const {
     }
 }
 
+bool Checker::isFloatLiteral(const AST::NodePtr& node) const {
+    if (!node) return false;
+    switch (node->nodeType()) {
+        case AST::NodeType::FloatLiteral:
+            return true;
+        case AST::NodeType::UnaryExpr: {
+            auto* un = static_cast<AST::UnaryExpr*>(node.get());
+            return isFloatLiteral(un->operand);
+        }
+        default:
+            return false;
+    }
+}
+
 bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
                              bool& ok) const {
     if (!node) {

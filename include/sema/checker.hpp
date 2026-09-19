@@ -119,6 +119,7 @@ public:
 
     Types::TypeRef record(const AST::ExprAST* node, Types::TypeRef type);
     bool isIntLiteral(const AST::NodePtr& node) const;
+    bool isFloatLiteral(const AST::NodePtr& node) const;
     bool foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
                         bool& ok) const;
 

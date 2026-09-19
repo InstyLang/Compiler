@@ -206,6 +206,7 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
     }
 
     const bool valueIsLiteral = isIntLiteral(valueNode);
+    const bool valueIsFloatLit = isFloatLiteral(valueNode);
     if (target->isInteger() && value->isInteger()) {
         if (valueIsLiteral) {
             unsigned __int128 bits = 0;
@@ -235,6 +236,7 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
     }
     if (target->isFloat() && value->isInteger() && valueIsLiteral) return true;
     if (target->isFloat() && value->isFloat()) {
+        if (valueIsFloatLit) return true;
         return target->bitWidth >= value->bitWidth;
     }
     if (target->isPointerLike() && value->isInteger() && valueIsLiteral) {
