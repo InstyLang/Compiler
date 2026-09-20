@@ -1768,6 +1768,10 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
     result_.callTargets[node] =
         fn->mangledName.empty() ? fn->name : fn->mangledName;
 
+    if (fn->isComptime) {
+        result_.comptimeCalls.push_back(node);
+    }
+
     return record(node, fn->returnType ? fn->returnType : types_.voidType());
 }
 

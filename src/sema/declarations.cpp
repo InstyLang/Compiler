@@ -383,10 +383,16 @@ void Checker::declareFunction(AST::FunctionDeclaration* node) {
     info.name = node->name;
     info.decl = node;
     info.isExported = node->isExported;
+    info.isComptime = node->isComptime;
 
     bool isExtern = false;
     info.mangledName = computeMangledName(node, isExtern);
     info.isExternal = isExtern || !node->hasBody;
+
+    if (info.isComptime && info.isExternal) {
+        emit("E2014", "comptime function '" + node->name + "' cannot be extern",
+             node, "comptime functions must have a body to execute during compilation");
+    }
 
     if (const auto* a = findAttr(node->attributes, "unsafe")) {
         info.isUnsafe = (a->value == "on" || a->value.empty());

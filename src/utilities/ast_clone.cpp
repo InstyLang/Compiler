@@ -69,6 +69,7 @@ std::shared_ptr<FunctionDeclaration> cloneFunctionDeclaration(
     out->hasBody = fn.hasBody;
     out->isExtern = fn.isExtern;
     out->isExported = fn.isExported;
+    out->isComptime = fn.isComptime;
     return out;
 }
 

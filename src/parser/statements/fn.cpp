@@ -16,6 +16,12 @@ AST::NodePtr Parser::parseFunctionDeclaration(std::vector<AST::Attribute> attrib
         for (auto& a : more) node->attributes.push_back(std::move(a));
     }
 
+    for (const auto& attr : node->attributes) {
+        if (attr.name == "comptime" && (attr.value.empty() || attr.value == "on" || attr.value == "true")) {
+            node->isComptime = true;
+        }
+    }
+
     if (check(TokenType::Identifier)) {
         node->name = current().value;
         advance();
@@ -58,6 +64,11 @@ AST::NodePtr Parser::parseExternDeclaration(std::vector<AST::Attribute> attribut
     if (decl && decl->nodeType() == AST::NodeType::FunctionDeclaration) {
         auto* fn = static_cast<AST::FunctionDeclaration*>(decl.get());
         fn->isExtern = true;
+        for (const auto& attr : fn->attributes) {
+            if (attr.name == "comptime" && (attr.value.empty() || attr.value == "on" || attr.value == "true")) {
+                fn->isComptime = true;
+            }
+        }
         if (fn->hasBody) {
             error("E1415", "extern functions cannot have a body",
                   "declare the signature only: `extern fun name(...) -> type`");

@@ -22,6 +22,7 @@ struct FunctionInfo {
     bool isExternal = false;
     bool isUnsafe = false;
     bool isExported = false;
+    bool isComptime = false;
     // A monomorphized generic instantiation (function or class method). Emitted
     // with weak linkage so multiple modules that instantiate the same generic can
     // be linked together (the linker folds the duplicate definitions).
@@ -134,6 +135,8 @@ struct SemaResult {
     // X.inalign nodes and the type each measures. Same arrangement as insizeTypes:
     // the alignment comes from the backend, which is the only place that knows it.
     std::unordered_map<const AST::ExprAST*, Types::TypeRef> inalignTypes;
+    // Call sites that target compile-time functions [comptime(on)]
+    std::vector<const AST::FunctionCallExpr*> comptimeCalls;
     // Generic templates declared by this module (raw AST pointers, owned by the
     // module's ProgramRoot). Exported so importing modules can instantiate them
     // (cross-module generics). Only `export`ed templates should be propagated.

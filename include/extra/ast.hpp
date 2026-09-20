@@ -121,6 +121,7 @@ struct FunctionDeclaration : ExprAST {
     bool hasBody = true;
     bool isExtern = false;   // declared with the `extern` keyword (external C symbol)
     bool isExported = false; // declared with the `export` keyword (visible to importers)
+    bool isComptime = false; // marked with [comptime(on)] or [comptime]
     NodeType nodeType() const override { return NodeType::FunctionDeclaration; }
 };
 
