@@ -13,6 +13,7 @@
 
 #include <extra/ast.hpp>
 #include <extra/type_system.hpp>
+#include <utilities/int128.hpp>
 
 namespace Backend {
 
@@ -34,6 +35,6 @@ SizeAlign scalarSizeAlign(Types::TypeRef type);
 //
 // This is what lets `i32 HANDLE = 0 - 11` or `u32 MASK = 1 << 12` hold the right
 // bytes rather than becoming zero.
-bool evalConstInt(const AST::ExprAST* expr, __int128& out);
+bool evalConstInt(const AST::ExprAST* expr, Utilities::Int128& out);
 
 }  // namespace Backend

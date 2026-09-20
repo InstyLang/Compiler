@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include <utilities/int128.hpp>
+
 namespace Backend {
 
 SizeAlign scalarSizeAlign(Types::TypeRef t) {
@@ -41,7 +43,7 @@ SizeAlign scalarSizeAlign(Types::TypeRef t) {
     }
 }
 
-bool evalConstInt(const AST::ExprAST* e, __int128& out) {
+bool evalConstInt(const AST::ExprAST* e, Utilities::Int128& out) {
     if (!e) return false;
     switch (e->nodeType()) {
         case AST::NodeType::IntegerLiteral:
@@ -52,7 +54,7 @@ bool evalConstInt(const AST::ExprAST* e, __int128& out) {
             return true;
         case AST::NodeType::UnaryExpr: {
             const auto* u = static_cast<const AST::UnaryExpr*>(e);
-            __int128 v = 0;
+            Utilities::Int128 v{};
             if (!evalConstInt(u->operand.get(), v)) return false;
             if (u->op == "-") { out = -v; return true; }
             if (u->op == "+") { out = v; return true; }
@@ -62,24 +64,26 @@ bool evalConstInt(const AST::ExprAST* e, __int128& out) {
         }
         case AST::NodeType::BinaryOperation: {
             const auto* b = static_cast<const AST::BinaryOperationExpr*>(e);
-            __int128 l = 0, r = 0;
+            Utilities::Int128 l{}, r{};
             if (!evalConstInt(b->lhs.get(), l)) return false;
             if (!evalConstInt(b->rhs.get(), r)) return false;
             const std::string& op = b->op;
             if (op == "+") { out = l + r; return true; }
             if (op == "-") { out = l - r; return true; }
             if (op == "*") { out = l * r; return true; }
-            // Use 64-bit division/modulo: 128-bit variants would pull in
-            // compiler-rt helpers (__divti3/__modti3) the static link lacks, and
-            // constant initializers never need more than 64-bit precision here.
+            // Divide/modulo in 64 bits: constant initializers never need more
+            // than 64-bit precision here. A divisor whose low word is zero is
+            // reported as non-constant rather than dividing by zero.
             if (op == "/") {
-                if (r == 0) return false;
-                out = static_cast<long long>(l) / static_cast<long long>(r);
+                const std::int64_t rn = static_cast<std::int64_t>(r);
+                if (r == 0 || rn == 0) return false;
+                out = static_cast<std::int64_t>(l) / rn;
                 return true;
             }
             if (op == "%") {
-                if (r == 0) return false;
-                out = static_cast<long long>(l) % static_cast<long long>(r);
+                const std::int64_t rn = static_cast<std::int64_t>(r);
+                if (r == 0 || rn == 0) return false;
+                out = static_cast<std::int64_t>(l) % rn;
                 return true;
             }
             if (op == "&") { out = l & r; return true; }
@@ -89,12 +93,12 @@ bool evalConstInt(const AST::ExprAST* e, __int128& out) {
         }
         case AST::NodeType::ShiftOperation: {
             const auto* s = static_cast<const AST::ShiftOperationExpr*>(e);
-            __int128 l = 0, r = 0;
+            Utilities::Int128 l{}, r{};
             if (!evalConstInt(s->lhs.get(), l)) return false;
             if (!evalConstInt(s->rhs.get(), r)) return false;
             if (r < 0 || r >= 128) return false;
-            if (s->op == "<<") { out = l << static_cast<int>(r); return true; }
-            if (s->op == ">>") { out = l >> static_cast<int>(r); return true; }
+            if (s->op == "<<") { out = l << static_cast<unsigned>(r.low64()); return true; }
+            if (s->op == ">>") { out = l >> static_cast<unsigned>(r.low64()); return true; }
             return false;
         }
         default:

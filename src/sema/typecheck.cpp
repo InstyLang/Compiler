@@ -6,6 +6,7 @@
 
 #include <extra/ast_clone.hpp>
 #include <extra/builtins.hpp>
+#include <utilities/int128.hpp>
 
 
 namespace Sema {
@@ -209,23 +210,23 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
     const bool valueIsFloatLit = isFloatLiteral(valueNode);
     if (target->isInteger() && value->isInteger()) {
         if (valueIsLiteral) {
-            unsigned __int128 bits = 0;
+            Utilities::UInt128 bits = 0;
             bool ok = true;
             if (!foldIntLiteral(valueNode, bits, ok) || !ok) return true;
             const int w = target->bitWidth;
             if (w <= 0 || w > 128) return true;
-            const __int128 sval = static_cast<__int128>(bits);
+            const Utilities::Int128 sval(bits);
             if (target->isSigned) {
                 if (w == 128) return true;
-                const __int128 min = -(static_cast<__int128>(1) << (w - 1));
-                const __int128 max = (static_cast<__int128>(1) << (w - 1)) - 1;
+                const Utilities::Int128 min = -(Utilities::Int128(1) << (w - 1));
+                const Utilities::Int128 max = (Utilities::Int128(1) << (w - 1)) - 1;
                 return sval >= min && sval <= max;
             }
             if (w == 128) return sval >= 0;
-            const unsigned __int128 umax =
-                (static_cast<unsigned __int128>(1) << w) - 1;
+            const Utilities::UInt128 umax =
+                (Utilities::UInt128(1) << w) - 1;
             if (sval >= 0) return bits <= umax;
-            const __int128 umin = -(static_cast<__int128>(1) << w);
+            const Utilities::Int128 umin = -(Utilities::Int128(1) << w);
             return sval >= umin;
         }
         if (target->isSigned == value->isSigned &&
@@ -240,7 +241,7 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         return target->bitWidth >= value->bitWidth;
     }
     if (target->isPointerLike() && value->isInteger() && valueIsLiteral) {
-        unsigned __int128 bits = 0;
+        Utilities::UInt128 bits = 0;
         bool ok = true;
         if (!foldIntLiteral(valueNode, bits, ok) || !ok) return false;
         return bits == 0;
@@ -1004,11 +1005,11 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
             // i32 by default (preserving the common case), widening to i64 / u64
             // / i128 / u128 only when the value does not fit a narrower type.
             const auto* il = static_cast<const AST::IntegerLiteral*>(raw);
-            const __int128 v = il->value;
+            const Utilities::Int128 v = il->value;
             Types::TypeRef litTy;
-            const __int128 i64Min = -(((__int128)1) << 63);
-            const __int128 i64Max = (((__int128)1) << 63) - 1;
-            const __int128 u64Max = (((__int128)1) << 64) - 1;
+            const Utilities::Int128 i64Min = -(Utilities::Int128(1) << 63);
+            const Utilities::Int128 i64Max = (Utilities::Int128(1) << 63) - 1;
+            const Utilities::Int128 u64Max = (Utilities::Int128(1) << 64) - 1;
             if (v >= -2147483648 && v <= 2147483647) {
                 litTy = types_.intType(32, true);    // fits in i32 (common case)
             } else if (v >= i64Min && v <= i64Max) {

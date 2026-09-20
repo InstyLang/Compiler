@@ -17,6 +17,7 @@
 #include <backend/machine_ir.hpp>
 #include <backend/mir_opt.hpp>
 #include <sema/checker.hpp>
+#include <utilities/int128.hpp>
 #include <backend/regalloc.hpp>
 #include <backend/wasm_emit.hpp>
 #include <utilities/string_hash.hpp>
@@ -60,7 +61,7 @@ void emitGlobals(const Sema::SemaResult& sema, const AST::ProgramRoot* program,
 
         // Fold a constant integer initializer of an integer/pointer/bool scalar
         // into .data; anything else is zero-initialized in .bss.
-        __int128 constValue = 0;
+        Utilities::Int128 constValue{};
         bool haveConst = false;
         auto it = initByName.find(g.name);
         const bool scalarInt = g.type->kind == Types::Kind::Int ||
@@ -78,9 +79,10 @@ void emitGlobals(const Sema::SemaResult& sema, const AST::ProgramRoot* program,
             std::uint64_t off = data.bytes.size();
             // Emit the initializer little-endian, honoring up to 16 bytes so
             // 128-bit (i128/u128) globals keep their high word.
-            unsigned __int128 raw = static_cast<unsigned __int128>(constValue);
+            const Utilities::UInt128 raw(constValue);
             for (unsigned b = 0; b < sa.size && b < 16; ++b) {
-                data.bytes.push_back(static_cast<std::uint8_t>((raw >> (8 * b)) & 0xFF));
+                data.bytes.push_back(
+                    static_cast<std::uint8_t>((raw >> (8 * b)).low64() & 0xFF));
             }
             for (unsigned b = 16; b < sa.size; ++b) data.bytes.push_back(0);
             code.defineSymbol(g.name, SectionKind::Data, off, binding,

@@ -1,5 +1,7 @@
 #include <sema/checker.hpp>
 
+#include <utilities/int128.hpp>
+
 
 namespace Sema {
 
@@ -96,7 +98,7 @@ bool Checker::isFloatLiteral(const AST::NodePtr& node) const {
     }
 }
 
-bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
+bool Checker::foldIntLiteral(const AST::NodePtr& node, Utilities::UInt128& bits,
                              bool& ok) const {
     if (!node) {
         ok = false;
@@ -104,14 +106,14 @@ bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
     }
     switch (node->nodeType()) {
         case AST::NodeType::IntegerLiteral: {
-            bits = static_cast<unsigned __int128>(
+            bits = Utilities::UInt128(
                 static_cast<const AST::IntegerLiteral*>(node.get())->value);
             return true;
         }
         case AST::NodeType::UnaryExpr: {
             auto* un = static_cast<const AST::UnaryExpr*>(node.get());
             if (!foldIntLiteral(un->operand, bits, ok)) return false;
-            if (un->op == "-") bits = static_cast<unsigned __int128>(0) - bits;
+            if (un->op == "-") bits = Utilities::UInt128(0) - bits;
             else if (un->op == "!") bits = bits == 0 ? 1 : 0;
             else if (un->op == "~") bits = ~bits;
             else if (un->op != "+") {
@@ -122,8 +124,8 @@ bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
         }
         case AST::NodeType::BinaryOperation: {
             auto* bin = static_cast<const AST::BinaryOperationExpr*>(node.get());
-            unsigned __int128 lhs = 0;
-            unsigned __int128 rhs = 0;
+            Utilities::UInt128 lhs = 0;
+            Utilities::UInt128 rhs = 0;
             if (!foldIntLiteral(bin->lhs, lhs, ok) || !foldIntLiteral(bin->rhs, rhs, ok)) {
                 return false;
             }
@@ -147,12 +149,12 @@ bool Checker::foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
         }
         case AST::NodeType::ShiftOperation: {
             auto* sh = static_cast<const AST::ShiftOperationExpr*>(node.get());
-            unsigned __int128 lhs = 0;
-            unsigned __int128 rhs = 0;
+            Utilities::UInt128 lhs = 0;
+            Utilities::UInt128 rhs = 0;
             if (!foldIntLiteral(sh->lhs, lhs, ok) || !foldIntLiteral(sh->rhs, rhs, ok)) {
                 return false;
             }
-            const unsigned amt = static_cast<unsigned>(rhs);
+            const unsigned amt = static_cast<unsigned>(rhs.low64());
             if (amt >= 128) {
                 bits = 0;
                 return true;

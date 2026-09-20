@@ -11,6 +11,7 @@
 #include <extra/type_system.hpp>
 #include <sema/sema.hpp>
 #include <utilities/errors.hpp>
+#include <utilities/int128.hpp>
 
 namespace Sema {
 
@@ -120,7 +121,7 @@ public:
     Types::TypeRef record(const AST::ExprAST* node, Types::TypeRef type);
     bool isIntLiteral(const AST::NodePtr& node) const;
     bool isFloatLiteral(const AST::NodePtr& node) const;
-    bool foldIntLiteral(const AST::NodePtr& node, unsigned __int128& bits,
+    bool foldIntLiteral(const AST::NodePtr& node, Utilities::UInt128& bits,
                         bool& ok) const;
 
     static ErrorReporting::SourceLocation locOf(const AST::ExprAST* node);

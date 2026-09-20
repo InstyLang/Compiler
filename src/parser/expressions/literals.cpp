@@ -2,6 +2,8 @@
 #include <parser/parser.hpp>
 #include <lexer/lexer.hpp>
 
+#include <utilities/int128.hpp>
+
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -29,11 +31,11 @@ long long parseIntegerValue(const std::string& raw) {
 
 // Parses an integer literal into a full 128-bit value, so i128/u128 constants
 // that exceed 64 bits are represented exactly. Accepts an optional 0x/0X hex
-// prefix; digits are accumulated into an unsigned __int128 (overflow past 128
-// bits simply wraps, matching two's-complement literal semantics).
-__int128 parseInteger128(const std::string& raw) {
+// prefix; digits are accumulated into a UInt128 and clamp to all-ones once
+// the next digit would overflow the 128-bit range.
+Utilities::Int128 parseInteger128(const std::string& raw) {
     std::string clean = stripUnderscores(raw);
-    unsigned __int128 acc = 0;
+    Utilities::UInt128 acc = 0;
     const char* p = clean.c_str();
     int base = 10;
     if (clean.size() > 2 && clean[0] == '0' &&
@@ -41,7 +43,7 @@ __int128 parseInteger128(const std::string& raw) {
         base = 16;
         p += 2;
     }
-    const unsigned __int128 limit = ~static_cast<unsigned __int128>(0);
+    const Utilities::UInt128 limit = ~Utilities::UInt128(0);
     for (; *p; ++p) {
         char c = *p;
         unsigned d;
@@ -50,13 +52,13 @@ __int128 parseInteger128(const std::string& raw) {
         else if (base == 16 && c >= 'A' && c <= 'F') d = static_cast<unsigned>(c - 'A' + 10);
         else break;
         if (d >= static_cast<unsigned>(base)) break;
-        if (acc > (limit - d) / static_cast<unsigned __int128>(base)) {
+        if (acc > (limit - d) / Utilities::UInt128(base)) {
             acc = limit;
             continue;
         }
-        acc = acc * static_cast<unsigned __int128>(base) + d;
+        acc = acc * Utilities::UInt128(base) + d;
     }
-    return static_cast<__int128>(acc);
+    return Utilities::Int128(acc);
 }
 
 double parseFloatValue(const std::string& raw) {

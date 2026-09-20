@@ -13,6 +13,7 @@
 #include <backend/mir_opt.hpp>
 #include <backend/wasm_writer.hpp>
 #include <sema/checker.hpp>
+#include <utilities/int128.hpp>
 
 namespace Backend::Wasm {
 
@@ -2307,7 +2308,7 @@ void layoutData(const Sema::SemaResult& sema, const AST::ProgramRoot* program,
         SizeAlign sa = scalarSizeAlign(g.type);
         if (sa.size == 0) sa.size = 1;
 
-        __int128 value = 0;
+        Utilities::Int128 value{};
         bool haveConst = false;
         const bool scalarInt = g.type->kind == Types::Kind::Int ||
                                g.type->kind == Types::Kind::Bool ||
@@ -2322,10 +2323,10 @@ void layoutData(const Sema::SemaResult& sema, const AST::ProgramRoot* program,
             continue;
         }
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(sa.size), 0);
-        unsigned __int128 raw = static_cast<unsigned __int128>(value);
+        const Utilities::UInt128 raw(value);
         for (std::uint64_t b = 0; b < sa.size && b < 16; ++b) {
-            bytes[static_cast<std::size_t>(b)] =
-                static_cast<std::uint8_t>((raw >> (8 * b)) & 0xFF);
+            bytes[static_cast<std::size_t>(b)] = static_cast<std::uint8_t>(
+                (raw >> static_cast<unsigned>(8 * b)).low64() & 0xFF);
         }
         placeInitialized(g.name, bytes.data(), sa.size, sa.align);
     }

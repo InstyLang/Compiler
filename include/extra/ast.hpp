@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <utilities/int128.hpp>
+
 namespace AST {
 
 enum class NodeType {
@@ -215,9 +217,10 @@ struct UnsafeBlock : ExprAST {
 
 struct IntegerLiteral : ExprAST {
     // 128-bit so that i128/u128 literals are represented exactly. Narrower
-    // literals (the common case) still fit and read back as `long long` via an
-    // implicit narrowing conversion at the use sites that only need 64 bits.
-    __int128 value = 0;
+    // literals (the common case) still fit and read back as 64-bit words via
+    // low64() at the use sites that only need 64 bits. Utilities::Int128 is
+    // the portable two-word type (MSVC has no native 128-bit integer).
+    Utilities::Int128 value{};
     std::string raw;
     NodeType nodeType() const override { return NodeType::IntegerLiteral; }
 };

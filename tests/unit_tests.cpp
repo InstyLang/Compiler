@@ -9,6 +9,11 @@
 #include <parser/parser.hpp>
 #include <sema/sema.hpp>
 #include <utilities/errors.hpp>
+#include <utilities/int128.hpp>
+
+namespace ecxlit {
+Utilities::Int128 parseInteger128(const std::string& raw);
+}
 
 namespace {
 
@@ -411,12 +416,119 @@ void testSema() {
         "fun main() -> i32 { return 0 }\n"));
 }
 
+// The portable 128-bit types behind IntegerLiteral::value and every
+// compile-time fold. These checks pin the two's-complement semantics the
+// front end, isAssignable range checks, and both emitters rely on.
+void testInt128() {
+    using Utilities::Int128;
+    using Utilities::UInt128;
+
+    // Widening and sign-extension from builtin integers.
+    CHECK(UInt128(0).isZero());
+    CHECK(UInt128(42).low64() == 42 && UInt128(42).high64() == 0);
+    CHECK(Int128(-1).low64() == ~0ULL && Int128(-1).high64() == -1);
+    CHECK(UInt128(-1).low64() == ~0ULL && UInt128(-1).high64() == ~0ULL);
+    CHECK(Int128(-2).high64() == -1);
+
+    // Addition/subtraction carry across the word boundary.
+    const UInt128 carry = UInt128(~0ULL, 0ULL) + UInt128(1);
+    CHECK(carry.low64() == 0 && carry.high64() == 1);
+    const UInt128 back = carry - UInt128(1);
+    CHECK(back.low64() == ~0ULL && back.high64() == 0);
+    CHECK((UInt128(0, 1) - UInt128(1)) == UInt128(~0ULL, 0ULL));
+
+    // Unsigned comparisons look at the high word first.
+    CHECK(UInt128(0, 1) > UInt128(~0ULL, 0ULL));
+    CHECK(UInt128(~0ULL, 0ULL) < UInt128(0, 1));
+    CHECK(UInt128(7, 7) <= UInt128(7, 7) && UInt128(7, 7) >= UInt128(7, 7));
+
+    // Multiplication: (2^64-1)^2 = 2^128 - 2^65 + 1 == {1, 2^64-2} mod 2^128.
+    const UInt128 sq = UInt128(~0ULL, 0ULL) * UInt128(~0ULL, 0ULL);
+    CHECK(sq.low64() == 1 && sq.high64() == 0xFFFFFFFFFFFFFFFEULL);
+    CHECK((UInt128(0, 1) * UInt128(2)) == UInt128(0, 2));
+
+    // Shifts, including the word boundary and out-of-range counts.
+    CHECK((UInt128(1) << 64) == UInt128(0, 1));
+    CHECK((UInt128(1) << 127) == UInt128(0, 0x8000000000000000ULL));
+    CHECK((UInt128(1) << 128).isZero());
+    CHECK((~UInt128(0) >> 64) == UInt128(~0ULL, 0ULL));
+    CHECK((~UInt128(0) >> 127) == UInt128(1));
+    CHECK((UInt128(3) << 65) == UInt128(0, 6));
+
+    // Division: exact small case, then the q*d + r identity over a spread of
+    // 128-bit operands (which also exercises multiply and compare).
+    CHECK((UInt128(0, 1) / UInt128(3)) == UInt128(0x5555555555555555ULL, 0ULL));
+    CHECK((UInt128(0, 1) % UInt128(3)) == UInt128(1));
+    const UInt128 dividends[] = {
+        UInt128(~0ULL, 0ULL),
+        UInt128(0, 1),
+        UInt128(0x123456789ABCDEF0ULL, 0xFEDCBA9876543210ULL),
+        ~UInt128(0),
+        UInt128(42, 0),
+    };
+    const UInt128 divisors[] = {
+        UInt128(3, 0),
+        UInt128(0, 1),
+        UInt128(0xDEADBEEF, 0),
+        UInt128(0xFFFFFFFFULL, 0xABCDEFULL),
+    };
+    for (const auto& d : dividends) {
+        for (const auto& v : divisors) {
+            CHECK(d / v * v + d % v == d);
+            CHECK(d % v < v);
+        }
+    }
+
+    // Signed arithmetic and arithmetic right shift.
+    CHECK((-Int128(1)) == Int128(~0ULL, -1));
+    CHECK((Int128(-5) + Int128(3)) == Int128(-2));
+    CHECK((Int128(2) * Int128(-3)) == Int128(-6));
+    CHECK((Int128(1) << 100) == Int128(0, 0x1000000000LL));
+    CHECK(((Int128(1) << 100) >> 99) == Int128(2));
+    CHECK((Int128(0, (-9223372036854775807LL - 1)) >> 64) ==
+          Int128(0x8000000000000000ULL, -1));
+    CHECK((Int128(-1) >> 100) == Int128(-1));
+    CHECK(Int128(-1) < Int128(0));
+    CHECK(Int128(0, -1) < Int128(~0ULL, 0LL));
+    CHECK(Int128(1) > Int128(-1));
+
+    // Bit-preserving signed<->unsigned reinterpretation.
+    CHECK(UInt128(Int128(0, -1)).high64() == ~0ULL);
+    CHECK(Int128(UInt128(~0ULL, ~0ULL)).high64() == -1);
+    CHECK(Int128(UInt128(0x8000000000000000ULL, 0ULL)).low64() ==
+          0x8000000000000000ULL);
+
+    // Literal parsing: exact through 128 bits, clamping past the range.
+    CHECK(parseInteger128("0") == Int128(0));
+    CHECK(parseInteger128("2147483647") == Int128(2147483647));
+    CHECK(parseInteger128("18446744073709551615") == Int128(~0ULL, 0LL));
+    CHECK(parseInteger128("18446744073709551616") == Int128(0, 1));
+    CHECK(parseInteger128("340282366920938463463374607431768211455") ==
+          Int128(~0ULL, -1));
+    CHECK(parseInteger128("340282366920938463463374607431768211456") ==
+          Int128(~0ULL, -1));
+    CHECK(parseInteger128("999999999999999999999999999999999999999999") ==
+          Int128(~0ULL, -1));
+    CHECK(parseInteger128("0x10000000000000000") == Int128(0, 1));
+    CHECK(parseInteger128("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") ==
+          Int128(~0ULL, -1));
+    CHECK(parseInteger128("1_000_000") == Int128(1000000));
+
+    // The emitters' little-endian byte extraction.
+    const UInt128 raw(parseInteger128("0x0123456789ABCDEFFEDCBA9876543210"));
+    CHECK((raw >> 0).low64() % 256 == 0x10);
+    CHECK((raw >> 56).low64() % 256 == 0xFE);
+    CHECK((raw >> 64).low64() % 256 == 0xEF);
+    CHECK((raw >> 120).low64() % 256 == 0x01);
+}
+
 }
 
 int main() {
     testLexer();
     testParser();
     testSema();
+    testInt128();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     if (g_failures > 0) {

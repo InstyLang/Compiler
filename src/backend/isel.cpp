@@ -1,5 +1,6 @@
 #include <backend/isel.hpp>
 
+#include <utilities/int128.hpp>
 #include <utilities/string_hash.hpp>
 
 #include <algorithm>
@@ -87,10 +88,10 @@ std::pair<std::uint64_t, std::uint64_t> doubleToF128Bits(double in) {
     const std::uint64_t frac = bits & ((1ULL << 52) - 1);
 
     std::uint64_t qExp = 0;
-    unsigned __int128 qFrac = 0;
+    Utilities::UInt128 qFrac = 0;
     if (exp == 0x7FFu) {
         qExp = 0x7FFFu;
-        qFrac = static_cast<unsigned __int128>(frac) << (112 - 52);
+        qFrac = Utilities::UInt128(frac) << (112 - 52);
         if (frac != 0 && qFrac == 0) qFrac = 1;
     } else if (exp == 0) {
         if (frac != 0) {
@@ -99,16 +100,16 @@ std::pair<std::uint64_t, std::uint64_t> doubleToF128Bits(double in) {
             const int unbiased = msb - 1074;
             qExp = static_cast<std::uint64_t>(unbiased + 16383);
             const std::uint64_t tail = frac ^ (1ULL << msb);
-            qFrac = static_cast<unsigned __int128>(tail) << (112 - msb);
+            qFrac = Utilities::UInt128(tail) << (112 - msb);
         }
     } else {
         const int unbiased = static_cast<int>(exp) - 1023;
         qExp = static_cast<std::uint64_t>(unbiased + 16383);
-        qFrac = static_cast<unsigned __int128>(frac) << (112 - 52);
+        qFrac = Utilities::UInt128(frac) << (112 - 52);
     }
 
-    const std::uint64_t lo = static_cast<std::uint64_t>(qFrac);
-    const std::uint64_t hiFrac = static_cast<std::uint64_t>(qFrac >> 64) & 0x0000FFFFFFFFFFFFULL;
+    const std::uint64_t lo = qFrac.low64();
+    const std::uint64_t hiFrac = (qFrac >> 64).low64() & 0x0000FFFFFFFFFFFFULL;
     const std::uint64_t hi = (sign << 63) | (qExp << 48) | hiFrac;
     return {lo, hi};
 }
@@ -2687,7 +2688,9 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
         case AST::NodeType::IntegerLiteral: {
             const auto& lit = static_cast<const AST::IntegerLiteral&>(*expr);
             VReg v = fn_->newVReg();
-            emit({MOpcode::MovRI, {MOperand::defVReg(v), MOperand::immediate(lit.value)}});
+            emit({MOpcode::MovRI,
+                  {MOperand::defVReg(v),
+                   MOperand::immediate(static_cast<std::int64_t>(lit.value.low64()))}});
             return v;
         }
         case AST::NodeType::BoolLiteral: {
@@ -3315,10 +3318,10 @@ void InstructionSelector::selI128(const AST::NodePtr& expr, VReg destAddr) {
     switch (expr->nodeType()) {
         case AST::NodeType::IntegerLiteral: {
             const auto& lit = static_cast<const AST::IntegerLiteral&>(*expr);
-            unsigned __int128 uv = static_cast<unsigned __int128>(lit.value);
-            std::int64_t lo = static_cast<std::int64_t>(static_cast<std::uint64_t>(uv));
-            std::int64_t hi =
-                static_cast<std::int64_t>(static_cast<std::uint64_t>(uv >> 64));
+            const Utilities::UInt128 uv(lit.value);
+            const std::int64_t lo = static_cast<std::int64_t>(uv.low64());
+            const std::int64_t hi =
+                static_cast<std::int64_t>((uv >> 64).low64());
             VReg vlo = fn_->newVReg();
             VReg vhi = fn_->newVReg();
             emit({MOpcode::MovRI, {MOperand::defVReg(vlo), MOperand::immediate(lo)}});
@@ -5796,9 +5799,8 @@ InstructionSelector::computeElementAddr(const AST::MemberAccessExpr& m,
     VReg idxChecked = kInvalidVReg;
     if (checkable) {
         if (constIdx) {
-            std::int64_t v =
-                static_cast<std::int64_t>(
-                    static_cast<const AST::IntegerLiteral&>(*m.property).value);
+            const std::int64_t v = static_cast<std::int64_t>(
+                static_cast<const AST::IntegerLiteral&>(*m.property).value.low64());
             if (staticLen >= 0) {
                 if (v < 0 || v >= staticLen) {
                     fail("selector: index " + std::to_string(v) +
@@ -5827,7 +5829,7 @@ InstructionSelector::computeElementAddr(const AST::MemberAccessExpr& m,
     // Constant index: fold `index * elemSize` (+ base disp) into a displacement.
     if (constIdx) {
         const auto& lit = static_cast<const AST::IntegerLiteral&>(*m.property);
-        return ElemAddr{base, baseDisp + static_cast<std::int64_t>(lit.value) *
+        return ElemAddr{base, baseDisp + static_cast<std::int64_t>(lit.value.low64()) *
                                              static_cast<std::int64_t>(elemSize)};
     }
 
