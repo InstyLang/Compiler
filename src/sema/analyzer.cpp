@@ -15,7 +15,8 @@ SemaResult Analyzer::analyze(const std::shared_ptr<AST::ProgramRoot>& program,
                              const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
                              const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
                              const std::vector<SumTypeInfo>& importedSumTypes,
-                             const std::vector<GlobalInfo>& importedGlobals) {
+                             const std::vector<GlobalInfo>& importedGlobals,
+                             const std::vector<std::pair<std::string, std::string>>& importedTypeAliases) {
     SemaResult result;
 
     const size_t errorsBefore =
@@ -32,7 +33,7 @@ SemaResult Analyzer::analyze(const std::shared_ptr<AST::ProgramRoot>& program,
     checker.run(program, importedFunctions, importedStructs,
                 importedClasses, importedEnums,
                 importedClassTemplates, importedFunctionTemplates,
-                importedSumTypes, importedGlobals);
+                importedSumTypes, importedGlobals, importedTypeAliases);
 
     bool newErrors = false;
     if (reporter_) {
@@ -61,10 +62,15 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
                   const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
                   const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
                   const std::vector<SumTypeInfo>& importedSumTypes,
-                  const std::vector<GlobalInfo>& importedGlobals) {
+                  const std::vector<GlobalInfo>& importedGlobals,
+                  const std::vector<std::pair<std::string, std::string>>& importedTypeAliases) {
     importedStore_ = importedFunctions;
 
     pushScope();
+
+    for (const auto& [aliasName, targetType] : importedTypeAliases) {
+        typeAliases_[aliasName] = targetType;
+    }
 
     // Register everything imported BEFORE the local declaration pre-pass, so that
     // local function signatures / field / payload types can resolve imported

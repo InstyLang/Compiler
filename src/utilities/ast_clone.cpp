@@ -429,6 +429,10 @@ NodePtr cloneNode(const NodePtr& node) {
             out->branches = cloneBranches(n.branches);
             return out;
         }
+        case NodeType::TypeAliasDeclaration: {
+            const auto& n = static_cast<const TypeAliasDeclaration&>(*node);
+            return make<TypeAliasDeclaration>(n);
+        }
         // Vestigial enum values: no node class declares them (they have no
         // INSTY_NODE_TYPE_OF entry), so no node can report them. Indexing is a
         // MemberAccessExpr with `computed` set, handled above.

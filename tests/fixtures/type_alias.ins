@@ -1,0 +1,36 @@
+module main
+
+// Fixture testing type aliases: type Name = TargetType
+
+type num = i64
+type Callback = func<(num) -> num>
+
+fun double_it(num x) -> num {
+    return x * 2
+}
+
+fun apply(Callback cb, num val) -> num {
+    return cb(val)
+}
+
+struct Container {
+    num value,
+    Callback operation
+}
+
+fun main() -> i32 {
+    num a = 21
+    Callback cb = double_it
+    num res = apply(cb, a)
+
+    Container c
+    c.value = 10
+    c.operation = double_it
+    Callback op = c.operation
+    num res2 = op(c.value)
+
+    if res == 42 && res2 == 20 {
+        return 42
+    }
+    return 1
+}

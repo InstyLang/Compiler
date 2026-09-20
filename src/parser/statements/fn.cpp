@@ -103,6 +103,12 @@ AST::NodePtr Parser::parseExportDeclaration() {
         case TokenType::KwEnum:
             decl = parseEnumDeclaration();
             break;
+        case TokenType::KwType:
+            decl = parseTypeAliasDeclaration();
+            if (decl && decl->nodeType() == AST::NodeType::TypeAliasDeclaration) {
+                static_cast<AST::TypeAliasDeclaration*>(decl.get())->isExported = true;
+            }
+            break;
         default:
             if (!attrs.empty()) {
                 error("E1400", "attributes must precede a declaration",
@@ -129,6 +135,9 @@ AST::NodePtr Parser::parseExportDeclaration() {
             break;
         case AST::NodeType::EnumDeclaration:
             static_cast<AST::EnumDeclaration*>(decl.get())->isExported = true;
+            break;
+        case AST::NodeType::TypeAliasDeclaration:
+            static_cast<AST::TypeAliasDeclaration*>(decl.get())->isExported = true;
             break;
         case AST::NodeType::VariableDeclaration:
             static_cast<AST::VariableDeclarationExpr*>(decl.get())->isExported = true;

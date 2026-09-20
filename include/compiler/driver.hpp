@@ -20,6 +20,7 @@ struct CompiledModule {
     std::vector<Sema::StructInfo> exportedStructs;
     std::vector<Sema::ClassInfo> exportedClasses;
     std::vector<Sema::EnumInfo> exportedEnums;
+    std::vector<std::pair<std::string, std::string>> exportedTypeAliases;
     // Shared libraries this module's referenced externs asked to link against
     // (via the `lib(...)` directive). Unioned across modules by the driver and
     // forwarded to the linker as `-l<name>`.
@@ -50,7 +51,8 @@ private:
                      const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
                      const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
                      const std::vector<Sema::SumTypeInfo>& importedSumTypes = {},
-                     const std::vector<Sema::GlobalInfo>& importedGlobals = {});
+                     const std::vector<Sema::GlobalInfo>& importedGlobals = {},
+                     const std::vector<std::pair<std::string, std::string>>& importedTypeAliases = {});
 
     int runCheckOnly();
     int runEmitTokens();

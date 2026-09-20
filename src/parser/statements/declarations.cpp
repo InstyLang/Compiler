@@ -74,3 +74,25 @@ bool ecxLooksLikeVariableDecl(Parser& parser) {
     }
     return parser.peek(after).type == TokenType::Identifier;
 }
+
+AST::NodePtr Parser::parseTypeAliasDeclaration() {
+    const Token& start = current();
+    expect(TokenType::KwType, "E1110", "'type' keyword");
+    match(TokenType::KwType);
+
+    auto node = std::make_shared<AST::TypeAliasDeclaration>();
+    if (check(TokenType::Identifier)) {
+        node->name = current().value;
+        advance();
+    } else {
+        error("E1111", "expected type alias name", "e.g. type MyInt = i64");
+        return nullptr;
+    }
+
+    expect(TokenType::Assign, "E1112", "'=' after type alias name");
+    match(TokenType::Assign);
+
+    node->targetType = parseTypeName();
+    fillRange(*node, start, previous());
+    return node;
+}

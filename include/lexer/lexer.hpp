@@ -24,6 +24,7 @@ enum class TokenType {
     KwConstructor,
     KwDestructor,
     KwOperator,
+    KwType,
     KwConst,
     KwLet,
     KwIf,

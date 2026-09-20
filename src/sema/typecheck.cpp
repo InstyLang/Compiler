@@ -57,6 +57,114 @@ Types::TypeRef Checker::resolveTypeSpelling(const std::string& spelling,
         return types_.voidType();
     }
 
+    // Resolve type aliases (e.g. `type num = i64`, `type EventCallback = func<() -> void>`).
+    // Also handle qualifiers (e.g. `MyAlias*`, `MyAlias[]`).
+    {
+        std::string trimmed = spelling;
+        while (!trimmed.empty() && trimmed.front() == ' ') trimmed.erase(trimmed.begin());
+        while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+
+        bool isVolatile = false;
+        const std::string volPrefix = "volatile ";
+        if (trimmed.compare(0, volPrefix.size(), volPrefix) == 0) {
+            isVolatile = true;
+            trimmed = trimmed.substr(volPrefix.size());
+            while (!trimmed.empty() && trimmed.front() == ' ') trimmed.erase(trimmed.begin());
+        }
+
+        size_t pointerStars = 0;
+        while (!trimmed.empty() && trimmed.back() == '*') {
+            ++pointerStars;
+            trimmed.pop_back();
+            while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+        }
+
+        std::string arraySuffix;
+        if (!trimmed.empty() && trimmed.back() == ']') {
+            size_t open = trimmed.rfind('[');
+            if (open != std::string::npos) {
+                arraySuffix = trimmed.substr(open);
+                trimmed = trimmed.substr(0, open);
+                while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+            }
+        }
+
+        auto it = typeAliases_.find(trimmed);
+        if (it != typeAliases_.end()) {
+            std::string expanded = it->second;
+            if (!arraySuffix.empty()) expanded += arraySuffix;
+            for (size_t s = 0; s < pointerStars; ++s) expanded += "*";
+            if (isVolatile) expanded = "volatile " + expanded;
+            return resolveTypeSpelling(expanded, at);
+        }
+    }
+
+    // If spelling is a func<...> whose params or return type might contain type aliases,
+    // decompose and resolve each part through resolveTypeSpelling!
+    {
+        std::string trimmed = spelling;
+        while (!trimmed.empty() && trimmed.front() == ' ') trimmed.erase(trimmed.begin());
+        while (!trimmed.empty() && trimmed.back() == ' ') trimmed.pop_back();
+
+        if (trimmed.size() >= 7 && trimmed.compare(0, 5, "func<") == 0 && trimmed.back() == '>') {
+            std::string inner = trimmed.substr(5, trimmed.size() - 6);
+            while (!inner.empty() && inner.front() == ' ') inner.erase(inner.begin());
+            while (!inner.empty() && inner.back() == ' ') inner.pop_back();
+
+            size_t arrowPos = std::string::npos;
+            int depth = 0;
+            for (size_t i = 0; i + 1 < inner.size(); ++i) {
+                if (inner[i] == '<' || inner[i] == '(' || inner[i] == '[') ++depth;
+                else if (inner[i] == '>' || inner[i] == ')' || inner[i] == ']') --depth;
+                else if (depth == 0 && inner[i] == '-' && inner[i + 1] == '>') {
+                    arrowPos = i;
+                    break;
+                }
+            }
+
+            if (arrowPos != std::string::npos) {
+                std::string paramsPart = inner.substr(0, arrowPos);
+                std::string retPart = inner.substr(arrowPos + 2);
+                while (!paramsPart.empty() && paramsPart.front() == ' ') paramsPart.erase(paramsPart.begin());
+                while (!paramsPart.empty() && paramsPart.back() == ' ') paramsPart.pop_back();
+                while (!retPart.empty() && retPart.front() == ' ') retPart.erase(retPart.begin());
+                while (!retPart.empty() && retPart.back() == ' ') retPart.pop_back();
+
+                if (!paramsPart.empty() && paramsPart.front() == '(' && paramsPart.back() == ')') {
+                    std::string paramsContent = paramsPart.substr(1, paramsPart.size() - 2);
+                    while (!paramsContent.empty() && paramsContent.front() == ' ') paramsContent.erase(paramsContent.begin());
+                    while (!paramsContent.empty() && paramsContent.back() == ' ') paramsContent.pop_back();
+
+                    std::vector<Types::TypeRef> paramTypes;
+                    if (!paramsContent.empty()) {
+                        std::string cur;
+                        int pdepth = 0;
+                        for (char ch : paramsContent) {
+                            if (ch == '<' || ch == '(' || ch == '[') {
+                                ++pdepth;
+                                cur.push_back(ch);
+                            } else if (ch == '>' || ch == ')' || ch == ']') {
+                                --pdepth;
+                                cur.push_back(ch);
+                            } else if (ch == ',' && pdepth == 0) {
+                                paramTypes.push_back(resolveTypeSpelling(cur, at));
+                                cur.clear();
+                            } else {
+                                cur.push_back(ch);
+                            }
+                        }
+                        if (!cur.empty()) {
+                            paramTypes.push_back(resolveTypeSpelling(cur, at));
+                        }
+                    }
+
+                    Types::TypeRef returnType = resolveTypeSpelling(retPart, at);
+                    return types_.functionType(paramTypes, returnType);
+                }
+            }
+        }
+    }
+
     {
         size_t base = 0;
         while (base < spelling.size() &&

@@ -139,6 +139,7 @@ struct SemaResult {
     // (cross-module generics). Only `export`ed templates should be propagated.
     std::vector<AST::ClassDeclaration*> genericClassTemplates;
     std::vector<AST::FunctionDeclaration*> genericFunctionTemplates;
+    std::vector<std::pair<std::string, std::string>> exportedTypeAliases;
     bool ok = false;
 
     Types::TypeRef typeOf(const AST::ExprAST* node) const {
@@ -159,7 +160,8 @@ public:
                        const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
                        const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
                        const std::vector<SumTypeInfo>& importedSumTypes = {},
-                       const std::vector<GlobalInfo>& importedGlobals = {});
+                       const std::vector<GlobalInfo>& importedGlobals = {},
+                       const std::vector<std::pair<std::string, std::string>>& importedTypeAliases = {});
 
 private:
     class Impl;

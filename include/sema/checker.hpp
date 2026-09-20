@@ -32,7 +32,8 @@ public:
              const std::vector<AST::ClassDeclaration*>& importedClassTemplates = {},
              const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates = {},
              const std::vector<SumTypeInfo>& importedSumTypes = {},
-             const std::vector<GlobalInfo>& importedGlobals = {});
+             const std::vector<GlobalInfo>& importedGlobals = {},
+             const std::vector<std::pair<std::string, std::string>>& importedTypeAliases = {});
 
     void declarePrepass(const std::shared_ptr<AST::ProgramRoot>& program);
     void declareStruct(AST::StructDeclaration* node);
@@ -147,6 +148,7 @@ private:
     std::map<std::string, Types::TypeRef> currentSubst_;
 
     std::map<std::string, Types::TypeRef> enumConstants_;
+    std::map<std::string, std::string> typeAliases_;
 
     struct PendingMethod {
         std::string className;

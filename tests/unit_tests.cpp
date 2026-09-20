@@ -561,6 +561,30 @@ void testFuncTypes() {
     CHECK(parseClean("module test\nfun run() -> void { func<() -> void> cb = 0\n }\n"));
 }
 
+void testTypeAliases() {
+    // Parser acceptance of type aliases
+    CHECK(parseClean("module test\ntype num = i64\n"));
+    CHECK(parseClean("module test\ntype Callback = func<() -> void>\n"));
+    CHECK(parseClean("module test\nexport type IntPair = i32[]\n"));
+
+    // Sema resolution
+    std::string src =
+        "module test\n"
+        "type num = i64\n"
+        "type Callback = func<(num) -> num>\n"
+        "fun double_it(num x) -> num { return x * 2 }\n"
+        "fun test() -> i64 {\n"
+        "    Callback cb = double_it\n"
+        "    return cb(21)\n"
+        "}\n";
+    auto ast = parse(src);
+    CHECK(ast != nullptr);
+    Types::TypeContext tc;
+    Sema::Analyzer analyzer(tc, nullptr);
+    auto res = analyzer.analyze(ast);
+    CHECK(res.ok);
+}
+
 }
 
 int main() {
@@ -569,6 +593,7 @@ int main() {
     testSema();
     testInt128();
     testFuncTypes();
+    testTypeAliases();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     if (g_failures > 0) {

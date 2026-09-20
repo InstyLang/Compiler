@@ -20,6 +20,17 @@ const AST::Attribute* findAttr(const std::vector<AST::Attribute>& attrs,
 void Checker::declarePrepass(const std::shared_ptr<AST::ProgramRoot>& program) {
     for (const auto& node : program->body) {
         if (!node) continue;
+        if (node->nodeType() == AST::NodeType::TypeAliasDeclaration) {
+            auto* ta = static_cast<AST::TypeAliasDeclaration*>(node.get());
+            typeAliases_[ta->name] = ta->targetType;
+            if (ta->isExported) {
+                result_.exportedTypeAliases.push_back({ta->name, ta->targetType});
+            }
+        }
+    }
+
+    for (const auto& node : program->body) {
+        if (!node) continue;
         switch (node->nodeType()) {
             case AST::NodeType::StructDeclaration:
                 if (auto* s = static_cast<AST::StructDeclaration*>(node.get()))

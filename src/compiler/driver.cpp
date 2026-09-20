@@ -194,9 +194,10 @@ bool CompilerDriver::compileFile(const std::string& path,
                                  bool emitArtifacts,
                                  bool preferHostedEntry,
                                  const std::vector<AST::ClassDeclaration*>& importedClassTemplates,
-                                 const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
-                                 const std::vector<Sema::SumTypeInfo>& importedSumTypes,
-                                 const std::vector<Sema::GlobalInfo>& importedGlobals) {
+                                  const std::vector<AST::FunctionDeclaration*>& importedFunctionTemplates,
+                                  const std::vector<Sema::SumTypeInfo>& importedSumTypes,
+                                  const std::vector<Sema::GlobalInfo>& importedGlobals,
+                                  const std::vector<std::pair<std::string, std::string>>& importedTypeAliases) {
     if (!fs::exists(path) || !fs::is_regular_file(path)) {
         std::cerr << "error: cannot read '" << path << "'\n";
         return false;
@@ -232,7 +233,8 @@ bool CompilerDriver::compileFile(const std::string& path,
                                              importedClassTemplates,
                                              importedFunctionTemplates,
                                              importedSumTypes,
-                                             importedGlobals);
+                                             importedGlobals,
+                                             importedTypeAliases);
 
     out.moduleName = sema.moduleName.empty() ? ast->moduleName : sema.moduleName;
     out.sourcePath = path;
@@ -240,6 +242,7 @@ bool CompilerDriver::compileFile(const std::string& path,
     out.exportedStructs = sema.structs;
     out.exportedClasses = sema.classes;
     out.exportedEnums = sema.enums;
+    out.exportedTypeAliases = sema.exportedTypeAliases;
     out.ast = ast;
     out.sema = sema;
 
@@ -440,6 +443,7 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
     std::vector<AST::FunctionDeclaration*> importedFunctionTemplates;
     std::vector<Sema::SumTypeInfo> importedSumTypes;
     std::vector<Sema::GlobalInfo> importedGlobals;
+    std::vector<std::pair<std::string, std::string>> importedTypeAliases;
     std::vector<std::string> objectFiles;
     std::vector<CompiledModule> compiledModules;
     // Shared libraries requested via `lib(...)` across all compiled modules.
@@ -456,7 +460,7 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
                          /*emitArtifacts=*/!wholeProgram && !checkOnly,
                          /*preferHostedEntry=*/!requiredLibSet.empty(),
                          importedClassTemplates, importedFunctionTemplates,
-                         importedSumTypes, importedGlobals)) {
+                         importedSumTypes, importedGlobals, importedTypeAliases)) {
             return 1;
         }
         if (printModuleSummary) {
@@ -547,6 +551,10 @@ int CompilerDriver::runSingleFilePipeline(bool checkOnly, bool printModuleSummar
                 if (existing.name == g.name) { present = true; break; }
             }
             if (!present) importedGlobals.push_back(g);
+        }
+        // Propagate exported type aliases
+        for (const auto& ta : mod.exportedTypeAliases) {
+            importedTypeAliases.push_back(ta);
         }
         if (!mod.objectPath.empty()) {
             objectFiles.push_back(mod.objectPath);

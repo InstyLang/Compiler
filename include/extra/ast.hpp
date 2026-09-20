@@ -61,6 +61,7 @@ enum class NodeType {
     ClassDeclaration,
     ImplBlock,
     CompileTimeIf,
+    TypeAliasDeclaration,
 
     Unknown
 };
@@ -480,6 +481,13 @@ struct CompileTimeIfExpr : ExprAST {
     NodeType nodeType() const override { return NodeType::CompileTimeIf; }
 };
 
+struct TypeAliasDeclaration : ExprAST {
+    std::string name;
+    std::string targetType;
+    bool isExported = false;
+    NodeType nodeType() const override { return NodeType::TypeAliasDeclaration; }
+};
+
 
 template <typename T>
 NodeType nodeTypeOf();
@@ -532,6 +540,7 @@ INSTY_NODE_TYPE_OF(EnumDeclaration, EnumDeclaration)
 INSTY_NODE_TYPE_OF(ClassDeclaration, ClassDeclaration)
 INSTY_NODE_TYPE_OF(ImplBlock, ImplBlock)
 INSTY_NODE_TYPE_OF(CompileTimeIfExpr, CompileTimeIf)
+INSTY_NODE_TYPE_OF(TypeAliasDeclaration, TypeAliasDeclaration)
 
 #undef INSTY_NODE_TYPE_OF
 

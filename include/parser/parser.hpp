@@ -45,6 +45,7 @@ public:
     AST::NodePtr parseStructDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseClassDeclaration(std::vector<AST::Attribute> attributes);
     AST::NodePtr parseEnumDeclaration();
+    AST::NodePtr parseTypeAliasDeclaration();
     AST::NodePtr parseImport();
     AST::NodePtr parseIf();
     AST::NodePtr parseWhile();

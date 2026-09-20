@@ -25,7 +25,8 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::KwConstructor:   return "KwConstructor";
         case TokenType::KwDestructor:    return "KwDestructor";
         case TokenType::KwOperator:      return "KwOperator";
-        case TokenType::KwConst:         return "KwConst";
+        case TokenType::KwType:         return "KwType";
+        case TokenType::KwConst:        return "KwConst";
         case TokenType::KwLet:           return "KwLet";
         case TokenType::KwIf:            return "KwIf";
         case TokenType::KwElse:          return "KwElse";
@@ -139,6 +140,7 @@ TokenType keywordTokenType(const std::string& word) {
         {"constructor", TokenType::KwConstructor},
         {"destructor",  TokenType::KwDestructor},
         {"operator",    TokenType::KwOperator},
+        {"type",        TokenType::KwType},
         {"const",       TokenType::KwConst},
         {"let",         TokenType::KwLet},
         {"if",          TokenType::KwIf},

@@ -49,6 +49,8 @@ AST::NodePtr Parser::parseTopLevel() {
             return parseClassDeclaration({});
         case TokenType::KwEnum:
             return parseEnumDeclaration();
+        case TokenType::KwType:
+            return parseTypeAliasDeclaration();
         case TokenType::KwSection:
             return parseSectionBlock();
         case TokenType::Hash:
@@ -80,6 +82,8 @@ AST::NodePtr Parser::parseStatement() {
             return parseUnsafeBlock();
         case TokenType::KwFun:
             return parseFunctionDeclaration({});
+        case TokenType::KwType:
+            return parseTypeAliasDeclaration();
         case TokenType::Hash:
             return parseCompileTimeIf();
         case TokenType::KwBreak: {
