@@ -5,9 +5,9 @@
 
 module m1
 
-// typedef uLong = u32
+export type uLong = u32
 
-// typedef comparator = u64
+export type comparator = func<(void*, void*) -> i32>
 
 export extern fun [dll("m1.dll")] add(i32 a, i32 b) -> i32
 
@@ -19,7 +19,7 @@ export extern fun [dll("m1.dll")] opaque_handle() -> void*
 
 export extern fun [dll("m1.dll")] compressBound(u32 sourceLen) -> u32
 
-export extern fun [dll("m1.dll")] sort_with(void* base, u32 count, u32 size, u64 cmp) -> void
+export extern fun [dll("m1.dll")] sort_with(void* base, u32 count, u32 size, func<(void*, void*) -> i32> cmp) -> void
 
 // skipped variadic function (needs a C shim): printf_like
 

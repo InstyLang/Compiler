@@ -66,14 +66,26 @@ struct Emitter {
                 return "";
             case CTypeKind::Pointer: {
                 // Resolve typedef chains on the pointee before judging:
-                // ptr-to-function -> u64, ptr-to-incomplete-record -> u64
+                // ptr-to-function -> func<(params) -> Ret>, ptr-to-incomplete-record -> u64
                 // (the opaque-handle convention), const char -> text.
                 const CType* target = &m.types[t.target];
                 while (target->kind == CTypeKind::TypedefRef &&
                        target->target != kNoType) {
                     target = &m.types[target->target];
                 }
-                if (target->kind == CTypeKind::Function) return "u64";
+                if (target->kind == CTypeKind::Function) {
+                    std::string ret = ty(target->target, context);
+                    if (ret.empty()) ret = "void";
+                    std::string s = "func<(";
+                    for (size_t i = 0; i < target->params.size(); ++i) {
+                        if (i) s += ", ";
+                        std::string pty = ty(target->params[i], context);
+                        if (pty.empty()) return "u64"; // fallback to u64 if unmappable
+                        s += pty;
+                    }
+                    s += ") -> " + ret + ">";
+                    return s;
+                }
                 if (target->kind == CTypeKind::Record &&
                     m.records[target->target].incomplete) {
                     return "u64";
@@ -421,7 +433,12 @@ struct Emitter {
         std::string body;
         for (const CDecl& decl : m.decls) {
             if (const auto* td = std::get_if<CTypedefDecl>(&decl)) {
-                body += "// typedef " + td->name + " = " + ty(td->type, "typedef") + "\n\n";
+                std::string targetStr = ty(td->type, "typedef");
+                if (!targetStr.empty()) {
+                    body += "export type " + td->name + " = " + targetStr + "\n\n";
+                } else {
+                    body += "// typedef " + td->name + " (unmappable)\n\n";
+                }
             } else if (const auto* rec = std::get_if<CRecordDef>(&decl)) {
                 if (rec->incomplete || !emittedTypes.insert(rec->name).second)
                     continue;

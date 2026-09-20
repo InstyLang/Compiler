@@ -5,19 +5,19 @@
 
 module zlib
 
-// typedef size_t = u64
+export type size_t = u64
 
-// typedef ptrdiff_t = i64
+export type ptrdiff_t = i64
 
-// typedef wchar_t = u16
+export type wchar_t = u16
 
-// typedef uLong = u32
+export type uLong = u32
 
-// typedef voidpf = void*
+export type voidpf = void*
 
-// typedef alloc_func = u64
+export type alloc_func = func<(void*, u32, u32) -> void*>
 
-// typedef free_func = u64
+export type free_func = func<(void*, void*) -> void>
 
 export struct z_stream_s {
     u8* next_in,
@@ -27,11 +27,11 @@ export struct z_stream_s {
     u32 avail_out,
     text msg,
     void* opaque,
-    u64 zalloc,
-    u64 zfree
+    func<(void*, u32, u32) -> void*> zalloc,
+    func<(void*, void*) -> void> zfree
 }
 
-// typedef z_stream = z_stream_s
+export type z_stream = z_stream_s
 
 export extern fun [dll("zlib1.dll")] compressBound(u32 sourceLen) -> u32
 
