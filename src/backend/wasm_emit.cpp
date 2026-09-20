@@ -315,6 +315,7 @@ bool boundaryType(Types::TypeRef type, ValType& out, bool& isVoid, bool& isSigne
         case Types::Kind::Pointer:
         case Types::Kind::Text:
         case Types::Kind::Object:
+        case Types::Kind::Function:
             out = ValType::I32;
             isSigned = false;
             return true;

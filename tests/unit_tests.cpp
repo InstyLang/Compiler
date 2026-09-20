@@ -499,27 +499,66 @@ void testInt128() {
           0x8000000000000000ULL);
 
     // Literal parsing: exact through 128 bits, clamping past the range.
-    CHECK(parseInteger128("0") == Int128(0));
-    CHECK(parseInteger128("2147483647") == Int128(2147483647));
-    CHECK(parseInteger128("18446744073709551615") == Int128(~0ULL, 0LL));
-    CHECK(parseInteger128("18446744073709551616") == Int128(0, 1));
-    CHECK(parseInteger128("340282366920938463463374607431768211455") ==
+    CHECK(ecxlit::parseInteger128("0") == Int128(0));
+    CHECK(ecxlit::parseInteger128("2147483647") == Int128(2147483647));
+    CHECK(ecxlit::parseInteger128("18446744073709551615") == Int128(~0ULL, 0LL));
+    CHECK(ecxlit::parseInteger128("18446744073709551616") == Int128(0, 1));
+    CHECK(ecxlit::parseInteger128("340282366920938463463374607431768211455") ==
           Int128(~0ULL, -1));
-    CHECK(parseInteger128("340282366920938463463374607431768211456") ==
+    CHECK(ecxlit::parseInteger128("340282366920938463463374607431768211456") ==
           Int128(~0ULL, -1));
-    CHECK(parseInteger128("999999999999999999999999999999999999999999") ==
+    CHECK(ecxlit::parseInteger128("999999999999999999999999999999999999999999") ==
           Int128(~0ULL, -1));
-    CHECK(parseInteger128("0x10000000000000000") == Int128(0, 1));
-    CHECK(parseInteger128("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") ==
+    CHECK(ecxlit::parseInteger128("0x10000000000000000") == Int128(0, 1));
+    CHECK(ecxlit::parseInteger128("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") ==
           Int128(~0ULL, -1));
-    CHECK(parseInteger128("1_000_000") == Int128(1000000));
+    CHECK(ecxlit::parseInteger128("1_000_000") == Int128(1000000));
 
     // The emitters' little-endian byte extraction.
-    const UInt128 raw(parseInteger128("0x0123456789ABCDEFFEDCBA9876543210"));
+    const UInt128 raw(ecxlit::parseInteger128("0x0123456789ABCDEFFEDCBA9876543210"));
     CHECK((raw >> 0).low64() % 256 == 0x10);
     CHECK((raw >> 56).low64() % 256 == 0xFE);
     CHECK((raw >> 64).low64() % 256 == 0xEF);
     CHECK((raw >> 120).low64() % 256 == 0x01);
+}
+
+void testFuncTypes() {
+    Types::TypeContext tc;
+
+    // fromString parsing for func<...>
+    Types::TypeRef f1 = tc.fromString("func<() -> void>");
+    CHECK(f1 != nullptr);
+    CHECK(f1->kind == Types::Kind::Function);
+    CHECK(f1->params.empty());
+    CHECK(f1->returnType != nullptr);
+    CHECK(f1->returnType->kind == Types::Kind::Void);
+    CHECK(tc.toString(f1) == "func<() -> void>");
+
+    Types::TypeRef f2 = tc.fromString("func<(u64, text) -> i8>");
+    CHECK(f2 != nullptr);
+    CHECK(f2->kind == Types::Kind::Function);
+    CHECK(f2->params.size() == 2);
+    CHECK(f2->params[0]->kind == Types::Kind::Int && f2->params[0]->bitWidth == 64 && !f2->params[0]->isSigned);
+    CHECK(f2->params[1]->kind == Types::Kind::Text);
+    CHECK(f2->returnType->kind == Types::Kind::Int && f2->returnType->bitWidth == 8 && f2->returnType->isSigned);
+    CHECK(tc.toString(f2) == "func<(u64, text) -> i8>");
+
+    // Nested func types
+    Types::TypeRef f3 = tc.fromString("func<() -> func<(i32) -> i32>>");
+    CHECK(f3 != nullptr);
+    CHECK(f3->kind == Types::Kind::Function);
+    CHECK(f3->params.empty());
+    CHECK(f3->returnType->kind == Types::Kind::Function);
+    CHECK(f3->returnType->params.size() == 1);
+    CHECK(tc.toString(f3) == "func<() -> func<(i32) -> i32>>");
+
+    // Equality
+    Types::TypeRef f1_dup = tc.fromString("func< () -> void >");
+    CHECK(Types::TypeContext::equals(f1, f1_dup));
+
+    // Parser acceptance of func types in var decls and params
+    CHECK(parseClean("module test\nfun apply(func<(i32, i32) -> i32> f) -> i32 { return f(1, 2) }\n"));
+    CHECK(parseClean("module test\nfun run() -> void { func<() -> void> cb = 0\n }\n"));
 }
 
 }
@@ -529,6 +568,7 @@ int main() {
     testParser();
     testSema();
     testInt128();
+    testFuncTypes();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     if (g_failures > 0) {

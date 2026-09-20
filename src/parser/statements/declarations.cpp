@@ -31,6 +31,7 @@ size_t scanType(Parser& parser, size_t i, bool& ok) {
             TokenType tt = parser.peek(k).type;
             if (tt == TokenType::Lt) ++depth;
             else if (tt == TokenType::Gt) --depth;
+            else if (tt == TokenType::Shr) depth -= 2;
             else if (tt == TokenType::EndOfFile) break;
             ++k;
         } while (depth > 0);

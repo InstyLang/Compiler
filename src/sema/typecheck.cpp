@@ -246,6 +246,22 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         if (!foldIntLiteral(valueNode, bits, ok) || !ok) return false;
         return bits == 0;
     }
+    // A function type `func<(...) -> Ret>` is assignable from:
+    // 1) A pointer-to-function with matching signature (`&fn` produces TypeRef(Pointer, element: Function))
+    // 2) A bare function / non-capturing lambda with matching signature
+    if (target->kind == Types::Kind::Function) {
+        if (value->kind == Types::Kind::Pointer && value->element &&
+            value->element->kind == Types::Kind::Function) {
+            return Types::TypeContext::equals(target, value->element);
+        }
+    }
+    // Symmetrically, a pointer to function accepts a function value
+    if (target->kind == Types::Kind::Pointer && target->element &&
+        target->element->kind == Types::Kind::Function) {
+        if (value->kind == Types::Kind::Function) {
+            return Types::TypeContext::equals(target->element, value);
+        }
+    }
     return false;
 }
 

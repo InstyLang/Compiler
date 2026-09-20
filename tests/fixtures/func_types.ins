@@ -1,0 +1,58 @@
+module main
+
+// Fixture testing first-class function types: func<(T1, T2) -> Ret>
+
+fun add(i64 a, i64 b) -> i64 {
+    return a + b
+}
+
+fun mul(i64 a, i64 b) -> i64 {
+    return a * b
+}
+
+fun apply2(func<(i64, i64) -> i64> f, i64 x, i64 y) -> i64 {
+    return f(x, y)
+}
+
+fun get_op(bool is_mul) -> func<(i64, i64) -> i64> {
+    if is_mul {
+        return mul
+    }
+    return add
+}
+
+struct Handler {
+    func<(i64, i64) -> i64> callback
+}
+
+fun main() -> i32 {
+    // 1. Assign bare function name
+    func<(i64, i64) -> i64> op = add
+    i64 r1 = op(10, 20)          // 30
+
+    // 2. Assign address-of function
+    func<(i64, i64) -> i64> op2 = &mul
+    i64 r2 = op2(6, 7)           // 42
+
+    // 3. Pass as argument to higher-order function
+    i64 r3 = apply2(add, 15, 15) // 30
+
+    // 4. Return from function
+    func<(i64, i64) -> i64> op3 = get_op(true)
+    i64 r4 = op3(3, 4)           // 12
+
+    // 5. In struct field
+    Handler h
+    h.callback = add
+    func<(i64, i64) -> i64> cb = h.callback
+    i64 r5 = cb(20, 22)          // 42
+
+    // 6. Non-capturing lambda
+    func<(i64, i64) -> i64> sub = |i64 a, i64 b| => a - b
+    i64 r6 = sub(50, 8)          // 42
+
+    if r1 == 30 && r2 == 42 && r3 == 30 && r4 == 12 && r5 == 42 && r6 == 42 {
+        return 42
+    }
+    return 1
+}

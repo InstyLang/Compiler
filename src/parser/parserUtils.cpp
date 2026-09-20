@@ -129,8 +129,51 @@ std::string Parser::parseTypeName() {
     }
 
     if (check(TokenType::Identifier) || isPrimitiveTypeName(current().value)) {
-        spelling += current().value;
+        std::string ident = current().value;
+        spelling += ident;
         advance();
+        if (ident == "func" && check(TokenType::Lt)) {
+            spelling += "<";
+            advance();
+            expect(TokenType::LParen, "E1105", "'(' to open func parameter types");
+            match(TokenType::LParen);
+            spelling += "(";
+            bool firstParam = true;
+            while (!atEnd() && !check(TokenType::RParen)) {
+                if (!firstParam) {
+                    expect(TokenType::Comma, "E1108", "',' between func parameter types");
+                    match(TokenType::Comma);
+                    spelling += ", ";
+                }
+                firstParam = false;
+                spelling += parseTypeName();
+            }
+            expect(TokenType::RParen, "E1107", "')' to close func parameter types");
+            match(TokenType::RParen);
+            spelling += ")";
+
+            expect(TokenType::Arrow, "E1109", "'->' before func return type");
+            match(TokenType::Arrow);
+            spelling += " -> ";
+            spelling += parseTypeName();
+
+            if (check(TokenType::Shr)) {
+                // Split '>>' into two '>' tokens
+                tokens_[index_].type = TokenType::Gt;
+                tokens_[index_].value = ">";
+                Token second = tokens_[index_];
+                second.column += 1;
+                tokens_.insert(tokens_.begin() + index_ + 1, second);
+            }
+            expect(TokenType::Gt, "E1102", "'>' to close func type");
+            match(TokenType::Gt);
+            spelling += ">";
+            while (check(TokenType::Star)) {
+                advance();
+                spelling += "*";
+            }
+            return spelling;
+        }
     } else if (check(TokenType::KwThis)) {
         spelling += "this";
         advance();
@@ -160,9 +203,16 @@ std::string Parser::parseTypeName() {
             firstArg = false;
             spelling += parseTypeName();
         }
-        expect(TokenType::Gt, "E1102", "'>' to close generic arguments");
-        match(TokenType::Gt);
-        spelling += ">";
+            if (check(TokenType::Shr)) {
+                tokens_[index_].type = TokenType::Gt;
+                tokens_[index_].value = ">";
+                Token second = tokens_[index_];
+                second.column += 1;
+                tokens_.insert(tokens_.begin() + index_ + 1, second);
+            }
+            expect(TokenType::Gt, "E1102", "'>' to close generic arguments");
+            match(TokenType::Gt);
+            spelling += ">";
     }
 
     while (check(TokenType::Star)) {

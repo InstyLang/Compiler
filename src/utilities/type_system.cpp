@@ -202,6 +202,64 @@ TypeRef TypeContext::fromString(const std::string& spelling) {
         }
     }
 
+    if (s.size() >= 7 && s.compare(0, 5, "func<") == 0 && s.back() == '>') {
+        std::string inner = s.substr(5, s.size() - 6);
+        while (!inner.empty() && inner.front() == ' ') inner.erase(inner.begin());
+        while (!inner.empty() && inner.back() == ' ') inner.pop_back();
+
+        size_t arrowPos = std::string::npos;
+        int depth = 0;
+        for (size_t i = 0; i + 1 < inner.size(); ++i) {
+            if (inner[i] == '<' || inner[i] == '(' || inner[i] == '[') ++depth;
+            else if (inner[i] == '>' || inner[i] == ')' || inner[i] == ']') --depth;
+            else if (depth == 0 && inner[i] == '-' && inner[i + 1] == '>') {
+                arrowPos = i;
+                break;
+            }
+        }
+
+        if (arrowPos != std::string::npos) {
+            std::string paramsPart = inner.substr(0, arrowPos);
+            std::string retPart = inner.substr(arrowPos + 2);
+            while (!paramsPart.empty() && paramsPart.front() == ' ') paramsPart.erase(paramsPart.begin());
+            while (!paramsPart.empty() && paramsPart.back() == ' ') paramsPart.pop_back();
+            while (!retPart.empty() && retPart.front() == ' ') retPart.erase(retPart.begin());
+            while (!retPart.empty() && retPart.back() == ' ') retPart.pop_back();
+
+            if (!paramsPart.empty() && paramsPart.front() == '(' && paramsPart.back() == ')') {
+                std::string paramsContent = paramsPart.substr(1, paramsPart.size() - 2);
+                while (!paramsContent.empty() && paramsContent.front() == ' ') paramsContent.erase(paramsContent.begin());
+                while (!paramsContent.empty() && paramsContent.back() == ' ') paramsContent.pop_back();
+
+                std::vector<TypeRef> paramTypes;
+                if (!paramsContent.empty()) {
+                    std::string cur;
+                    int pdepth = 0;
+                    for (char ch : paramsContent) {
+                        if (ch == '<' || ch == '(' || ch == '[') {
+                            ++pdepth;
+                            cur.push_back(ch);
+                        } else if (ch == '>' || ch == ')' || ch == ']') {
+                            --pdepth;
+                            cur.push_back(ch);
+                        } else if (ch == ',' && pdepth == 0) {
+                            paramTypes.push_back(fromString(cur));
+                            cur.clear();
+                        } else {
+                            cur.push_back(ch);
+                        }
+                    }
+                    if (!cur.empty()) {
+                        paramTypes.push_back(fromString(cur));
+                    }
+                }
+
+                TypeRef returnType = fromString(retPart);
+                return functionType(paramTypes, returnType);
+            }
+        }
+    }
+
     size_t angle = s.find('<');
     if (angle != std::string::npos) {
         std::string base = s.substr(0, angle);
@@ -264,12 +322,12 @@ std::string TypeContext::toString(TypeRef type) const {
         case Kind::Class:
         case Kind::Generic: return type->name;
         case Kind::Function: {
-            std::string s = "fn(";
+            std::string s = "func<(";
             for (size_t i = 0; i < type->params.size(); ++i) {
                 if (i) s += ", ";
                 s += toString(type->params[i]);
             }
-            s += ") -> " + toString(type->returnType);
+            s += ") -> " + toString(type->returnType) + ">";
             return s;
         }
         case Kind::Error: return "<error>";

@@ -1225,6 +1225,7 @@ std::unique_ptr<MFunction> InstructionSelector::selectBody(
 
         if (!isAggregate && !isIntegerLike(pty) && pty &&
             pty->kind != Types::Kind::Pointer && pty->kind != Types::Kind::Text &&
+            pty->kind != Types::Kind::Function && pty->kind != Types::Kind::Closure &&
             pty->kind != Types::Kind::Any && pty->kind != Types::Kind::Object) {
             fail("selector: unsupported parameter type for '" + paramNames[i] + "'");
             break;
@@ -2750,6 +2751,16 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
                                MOperand::immediate(it->second)}});
                         return v;
                     }
+                }
+                // Bare function name used as a value (e.g. `func<...> f = add`):
+                // emit LEA of the function's symbol, producing its entry point.
+                for (const auto& fi : sema_.functions) {
+                    if (fi.name != id.name && fi.mangledName != id.name) continue;
+                    const std::string sym = fi.mangledName.empty() ? fi.name : fi.mangledName;
+                    VReg a = fn_->newVReg();
+                    emit({MOpcode::Lea, {MOperand::defVReg(a), MOperand::sym(sym)}});
+                    (void)importDllFor(sym);
+                    return a;
                 }
                 fail("selector: unknown identifier '" + id.name + "'");
                 return kInvalidVReg;
