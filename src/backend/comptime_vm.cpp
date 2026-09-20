@@ -536,13 +536,19 @@ bool foldExprInPlace(AST::NodePtr& node, const Sema::SemaResult& sema,
                 const std::string& sym = fi.mangledName.empty() ? fi.name : fi.mangledName;
                 if (sym == targetSymbol && fi.isComptime) {
                     std::vector<VmValue> args;
+                    bool allConst = true;
                     for (const auto& arg : call->arguments) {
                         VmValue v;
                         if (!ComptimeVM::evalConstExpr(arg.get(), v)) {
-                            errorOut = "comptime call to '" + fi.name + "' requires constant arguments";
-                            return false;
+                            allConst = false;
+                            break;
                         }
                         args.push_back(v);
+                    }
+
+                    // If not all arguments are compile-time constants, leave as a normal runtime call!
+                    if (!allConst) {
+                        return true;
                     }
 
                     std::string selErr;

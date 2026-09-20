@@ -31,6 +31,10 @@ fun main() -> i32 {
     i64 sumsq = sum_squares(5)
     f64 area = compute_circle_area(2.0)
 
+    // Comptime functions can ALSO be invoked at runtime with dynamic variables:
+    i64 dyn_n = 5
+    i64 dyn_res = factorial(dyn_n) // 120 (executed at runtime)
+
     io.print("factorial(10) = ")
     io.print_int(fact10) // 3628800
     io.println("")
@@ -39,7 +43,11 @@ fun main() -> i32 {
     io.print_int(sumsq) // 1^2 + 2^2 + 3^2 + 4^2 + 5^2 = 55
     io.println("")
 
-    if fact10 == 3628800 && sumsq == 55 {
+    io.print("dynamic factorial(5) = ")
+    io.print_int(dyn_res) // 120
+    io.println("")
+
+    if fact10 == 3628800 && sumsq == 55 && dyn_res == 120 {
         return 42
     }
     return 1
