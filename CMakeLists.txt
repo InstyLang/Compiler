@@ -193,6 +193,7 @@ if(INSTY_BUILD_BACKEND)
         src/backend/pe_writer.cpp
         src/backend/macho_writer.cpp
     src/backend/const_eval.cpp
+    src/backend/comptime_vm.cpp
     src/backend/asm_block.cpp
     src/backend/wasm_writer.cpp
         src/backend/wasm_emit.cpp
@@ -270,7 +271,7 @@ if(INSTY_BUILD_TESTS)
         tests/unit_tests.cpp
     )
     target_link_libraries(insty_unit_tests PRIVATE
-        InstyParse InstyLex InstySema InstyUtilities)
+        InstyParse InstyLex InstySema InstyUtilities InstyBackend)
     add_test(NAME insty_unit_tests COMMAND insty_unit_tests)
 
     # Backend: encode a tiny `main` (return 42), write COFF + ELF64 objects,

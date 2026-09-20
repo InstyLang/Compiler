@@ -5,6 +5,7 @@
 
 #include <extra/ast.hpp>
 #include <extra/type_system.hpp>
+#include <backend/comptime_vm.hpp>
 #include <lexer/lexer.hpp>
 #include <parser/parser.hpp>
 #include <sema/sema.hpp>
@@ -585,6 +586,75 @@ void testTypeAliases() {
     CHECK(res.ok);
 }
 
+void testComptimeVM() {
+    using namespace Backend;
+    ComptimeVM vm;
+
+    // Test a synthetic MFunction computing (20 + 22)
+    auto fn = std::make_shared<MFunction>("add_const", Abi::SystemV);
+    uint32_t b0 = fn->addBlock("entry");
+    VReg v0 = fn->newVReg();
+    VReg v1 = fn->newVReg();
+
+    // v0 = 20
+    fn->block(b0).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(v0), MOperand::immediate(20)}});
+    // v1 = 22
+    fn->block(b0).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(v1), MOperand::immediate(22)}});
+    // v0 += v1
+    fn->block(b0).insts.push_back({MOpcode::Add, {MOperand::useDefVReg(v0), MOperand::useVReg(v1)}});
+    // ret v0
+    fn->block(b0).insts.push_back({MOpcode::Ret, {MOperand::useVReg(v0)}});
+
+    vm.addFunction("add_const", fn);
+    std::string err;
+    VmValue res = vm.execute("add_const", {}, err);
+    CHECK(err.empty());
+    CHECK(res.i == 42);
+
+    // Test loop / branches in VM: compute sum(1..5) = 15
+    auto fnLoop = std::make_shared<MFunction>("sum_5", Abi::SystemV);
+    uint32_t entry = fnLoop->addBlock("entry");
+    uint32_t header = fnLoop->addBlock("header");
+    uint32_t body = fnLoop->addBlock("body");
+    uint32_t exit = fnLoop->addBlock("exit");
+
+    VReg sum = fnLoop->newVReg();
+    VReg i = fnLoop->newVReg();
+    VReg limit = fnLoop->newVReg();
+
+    // entry:
+    // sum = 0, i = 1, limit = 5
+    fnLoop->block(entry).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(sum), MOperand::immediate(0)}});
+    fnLoop->block(entry).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(i), MOperand::immediate(1)}});
+    fnLoop->block(entry).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(limit), MOperand::immediate(5)}});
+    fnLoop->block(entry).insts.push_back({MOpcode::Jmp, {MOperand::lbl(header)}});
+
+    // header:
+    // cmp i, limit; jg exit
+    fnLoop->block(header).insts.push_back({MOpcode::Cmp, {MOperand::useVReg(i), MOperand::useVReg(limit)}});
+    MInst jg{MOpcode::Jcc, {MOperand::lbl(exit)}};
+    jg.cond = Cond::GT;
+    fnLoop->block(header).insts.push_back(jg);
+    fnLoop->block(header).insts.push_back({MOpcode::Jmp, {MOperand::lbl(body)}});
+
+    // body:
+    // sum += i; i += 1; jmp header
+    fnLoop->block(body).insts.push_back({MOpcode::Add, {MOperand::useDefVReg(sum), MOperand::useVReg(i)}});
+    VReg one = fnLoop->newVReg();
+    fnLoop->block(body).insts.push_back({MOpcode::MovRI, {MOperand::defVReg(one), MOperand::immediate(1)}});
+    fnLoop->block(body).insts.push_back({MOpcode::Add, {MOperand::useDefVReg(i), MOperand::useVReg(one)}});
+    fnLoop->block(body).insts.push_back({MOpcode::Jmp, {MOperand::lbl(header)}});
+
+    // exit:
+    // ret sum
+    fnLoop->block(exit).insts.push_back({MOpcode::Ret, {MOperand::useVReg(sum)}});
+
+    vm.addFunction("sum_5", fnLoop);
+    res = vm.execute("sum_5", {}, err);
+    CHECK(err.empty());
+    CHECK(res.i == 15);
+}
+
 }
 
 int main() {
@@ -594,6 +664,7 @@ int main() {
     testInt128();
     testFuncTypes();
     testTypeAliases();
+    testComptimeVM();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     if (g_failures > 0) {
