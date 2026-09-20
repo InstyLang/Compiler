@@ -1,0 +1,46 @@
+module main
+
+import std::io
+
+fun [comptime(on)] factorial(i64 n) -> i64 {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fun [comptime(on)] sum_squares(i64 count) -> i64 {
+    i64 total = 0
+    i64 i = 1
+    while i <= count {
+        total = total + (i * i)
+        i = i + 1
+    }
+    return total
+}
+
+fun [comptime(on)] compute_circle_area(f64 r) -> f64 {
+    f64 pi = 3.141592653589793
+    return pi * r * r
+}
+
+fun main() -> i32 {
+    // These calls are completely evaluated and folded into constant literals
+    // during compilation by the ComptimeVM; no call instructions exist in the binary!
+    i64 fact10 = factorial(10)
+    i64 sumsq = sum_squares(5)
+    f64 area = compute_circle_area(2.0)
+
+    io.print("factorial(10) = ")
+    io.print_int(fact10) // 3628800
+    io.println("")
+
+    io.print("sum_squares(5) = ")
+    io.print_int(sumsq) // 1^2 + 2^2 + 3^2 + 4^2 + 5^2 = 55
+    io.println("")
+
+    if fact10 == 3628800 && sumsq == 55 {
+        return 42
+    }
+    return 1
+}

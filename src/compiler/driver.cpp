@@ -10,6 +10,8 @@
 #include <unordered_map>
 
 #include <backend/module_emit.hpp>
+#include <backend/comptime_vm.hpp>
+#include <backend/isel.hpp>
 #include <compiler/runtime_core.hpp>
 #include <lexer/lexer.hpp>
 #include <parser/parser.hpp>
@@ -250,6 +252,18 @@ bool CompilerDriver::compileFile(const std::string& path,
     if (hadError || !sema.ok) {
         ErrorReporting::cleanupErrorReporter();
         return false;
+    }
+
+    // Fold compile-time function calls (comptime calls) into constants in-place
+    if (!sema.comptimeCalls.empty()) {
+        Backend::InstructionSelector isel(sema, Backend::Abi::SystemV, config_.target.isInstantOS,
+                                          config_.boundsCheck, config_.target.arch == "x86_64");
+        std::string foldErr;
+        if (!Backend::ComptimeVM::foldComptimeCalls(*ast, sema, isel, foldErr)) {
+            std::cerr << "error: " << path << ": " << foldErr << "\n";
+            ErrorReporting::cleanupErrorReporter();
+            return false;
+        }
     }
 
     if (!emitArtifacts) {

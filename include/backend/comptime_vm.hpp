@@ -9,8 +9,12 @@
 
 #include <backend/machine_ir.hpp>
 #include <extra/type_system.hpp>
+#include <extra/ast.hpp>
+#include <sema/sema.hpp>
 
 namespace Backend {
+
+class InstructionSelector;
 
 struct VmValue {
     enum class Kind { Integer, Float, None };
@@ -44,10 +48,20 @@ public:
     bool readMem(std::uint64_t addr, void* dst, std::size_t size);
     bool writeMem(std::uint64_t addr, const void* src, std::size_t size);
 
+    // Evaluate a constant expression to a VmValue
+    static bool evalConstExpr(const AST::ExprAST* expr, VmValue& out);
+
+    // Fold all compile-time function calls in an AST
+    static bool foldComptimeCalls(AST::ProgramRoot& program, const Sema::SemaResult& sema,
+                                  InstructionSelector& isel, std::string& errorOut);
+
 private:
     struct StackFrame {
         std::shared_ptr<MFunction> fn;
         std::vector<VmValue> vregs;
+        std::unordered_map<PhysReg, uint64_t> physRegs;
+        uint64_t rax = 0;
+        double xmm0 = 0.0;
         std::uint64_t frameBase = 0; // offset in memory_
         std::uint32_t currentBlock = 0;
         std::size_t currentInst = 0;
