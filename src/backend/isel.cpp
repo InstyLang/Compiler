@@ -1680,6 +1680,12 @@ void InstructionSelector::selVarDecl(const AST::VariableDeclarationExpr& decl) {
         if (decl.initialValue) {
             VReg v = selExpr(decl.initialValue);
             if (failed_) return;
+            Types::TypeRef valTy = concreteTypeOf(decl.initialValue.get());
+            if (valTy && !isFloatType(valTy) && (valTy->kind == Types::Kind::Int || valTy->kind == Types::Kind::Bool)) {
+                VReg fv = fn_->newVReg(RegClass::XMM);
+                emitFW(MOpcode::CvtI2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, fw);
+                v = fv;
+            }
             emitFW(MOpcode::FStore, {MOperand::slot(slot), MOperand::useVReg(v)}, fw);
         }
         return;
@@ -2006,6 +2012,12 @@ void InstructionSelector::selAssign(const AST::AssignmentExpr& a) {
     VReg v = selExpr(a.value);
     if (failed_) return;
     if (li.isFloat) {
+        Types::TypeRef valTy = concreteTypeOf(a.value.get());
+        if (valTy && !isFloatType(valTy) && (valTy->kind == Types::Kind::Int || valTy->kind == Types::Kind::Bool)) {
+            VReg fv = fn_->newVReg(RegClass::XMM);
+            emitFW(MOpcode::CvtI2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, li.width);
+            v = fv;
+        }
         emitFW(MOpcode::FStore, {MOperand::slot(li.slot), MOperand::useVReg(v)}, li.width);
         return;
     }
