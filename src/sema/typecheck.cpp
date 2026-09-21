@@ -383,6 +383,21 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         }
         return true;
     }
+    // Fixed array assignability / literal initialization: element-wise assignable
+    if (target->kind == Types::Kind::Array && value->kind == Types::Kind::Array) {
+        if (target->arrayLength != value->arrayLength) return false;
+        const AST::ArrayLiteral* al = (valueNode && valueNode->nodeType() == AST::NodeType::ArrayLiteral)
+                                          ? static_cast<const AST::ArrayLiteral*>(valueNode.get())
+                                          : nullptr;
+        if (al) {
+            for (const auto& elem : al->elements) {
+                Types::TypeRef elemT = checkExpr(elem);
+                if (!isAssignable(target->element, elemT, elem)) return false;
+            }
+            return true;
+        }
+        return isAssignable(target->element, value->element, nullptr);
+    }
     return false;
 }
 
