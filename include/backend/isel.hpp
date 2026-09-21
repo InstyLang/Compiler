@@ -398,6 +398,7 @@ private:
     // address. Used wherever an aggregate rvalue needs a backing address
     // (struct return, copy-init, by-value arg, field assignment source).
     ElemAddr materializeStructInstantiation(const AST::StructInstantiation& lit);
+    ElemAddr materializeTupleLiteral(const AST::TupleLiteral& lit);
     // An array literal `[a, b, c]` materialized into a fresh stack temp: each
     // element is stored at `base + i*stride`. Returns the temp's address. Used as
     // a copy-init source and as an addressable rvalue.

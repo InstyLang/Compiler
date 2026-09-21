@@ -371,6 +371,18 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
             return Types::TypeContext::equals(target->element, value);
         }
     }
+    // Tuple assignability (element-wise)
+    if (target->kind == Types::Kind::Tuple && value->kind == Types::Kind::Tuple) {
+        if (target->params.size() != value->params.size()) return false;
+        const AST::TupleLiteral* tl = (valueNode && valueNode->nodeType() == AST::NodeType::TupleLiteral)
+                                          ? static_cast<const AST::TupleLiteral*>(valueNode.get())
+                                          : nullptr;
+        for (size_t i = 0; i < target->params.size(); ++i) {
+            AST::NodePtr elemNode = (tl && i < tl->elements.size()) ? tl->elements[i] : nullptr;
+            if (!isAssignable(target->params[i], value->params[i], elemNode)) return false;
+        }
+        return true;
+    }
     return false;
 }
 
@@ -823,13 +835,17 @@ void Checker::checkDestructure(AST::DestructureStatement* node) {
     Types::TypeRef valType = node->value ? checkExpr(node->value) : types_.errorType();
     if (!valType || valType->isError()) return;
 
-    if (valType->kind == Types::Kind::Struct || valType->kind == Types::Kind::Class) {
-        // Look up struct field types
+    if (valType->kind == Types::Kind::Struct || valType->kind == Types::Kind::Class ||
+        valType->kind == Types::Kind::Tuple) {
         std::vector<Types::TypeRef> fieldTypes;
-        for (const auto& s : result_.structs) {
-            if (s.name == valType->name) {
-                for (const auto& f : s.fields) fieldTypes.push_back(f.second);
-                break;
+        if (valType->kind == Types::Kind::Tuple) {
+            fieldTypes = valType->params;
+        } else {
+            for (const auto& s : result_.structs) {
+                if (s.name == valType->name) {
+                    for (const auto& f : s.fields) fieldTypes.push_back(f.second);
+                    break;
+                }
             }
         }
         for (size_t i = 0; i < node->bindings.size(); ++i) {
@@ -1246,6 +1262,14 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
                     checkExpr(op->value);
             }
             return record(raw, types_.objectType());
+        }
+        case AST::NodeType::TupleLiteral: {
+            auto* tl = static_cast<AST::TupleLiteral*>(raw);
+            std::vector<Types::TypeRef> elemTypes;
+            for (auto& elem : tl->elements) {
+                elemTypes.push_back(checkExpr(elem));
+            }
+            return record(raw, types_.tupleType(elemTypes));
         }
         case AST::NodeType::StructInstantiation: {
             auto* si = static_cast<AST::StructInstantiation*>(raw);
@@ -2622,6 +2646,22 @@ Types::TypeRef Checker::checkMember(AST::MemberAccessExpr* node) {
                     }
                 }
             }
+        }
+    }
+    if (objType && objType->kind == Types::Kind::Tuple) {
+        // Tuple indexing `t.0`, `t.1`, etc.
+        try {
+            size_t idx = std::stoul(member);
+            if (idx < objType->params.size()) {
+                return record(node, objType->params[idx]);
+            } else {
+                emit("E2007", "tuple index " + member + " out of range (tuple has " +
+                              std::to_string(objType->params.size()) + " elements)", node, "");
+                return record(node, types_.errorType());
+            }
+        } catch (...) {
+            emit("E2007", "tuples only support numeric indexing (e.g. `t.0`), got '" + member + "'", node, "");
+            return record(node, types_.errorType());
         }
     }
     if (objType && objType->kind == Types::Kind::Object && !node->computed) {

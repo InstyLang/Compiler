@@ -109,6 +109,13 @@ TypeRef TypeContext::functionType(const std::vector<TypeRef>& params,
     return intern(t);
 }
 
+TypeRef TypeContext::tupleType(const std::vector<TypeRef>& elements) {
+    Type t;
+    t.kind = Kind::Tuple;
+    t.params = elements;
+    return intern(t);
+}
+
 TypeRef TypeContext::closureType(TypeRef functionType) {
     Type t;
     t.kind = Kind::Closure;
@@ -260,6 +267,37 @@ TypeRef TypeContext::fromString(const std::string& spelling) {
         }
     }
 
+    // Tuple types: `(T1, T2, ...)`
+    if (!s.empty() && s.front() == '(' && s.back() == ')') {
+        std::string inner = s.substr(1, s.size() - 2);
+        while (!inner.empty() && inner.front() == ' ') inner.erase(inner.begin());
+        while (!inner.empty() && inner.back() == ' ') inner.pop_back();
+
+        std::vector<TypeRef> elements;
+        if (!inner.empty()) {
+            std::string cur;
+            int depth = 0;
+            for (char ch : inner) {
+                if (ch == '<' || ch == '(' || ch == '[') {
+                    ++depth;
+                    cur.push_back(ch);
+                } else if (ch == '>' || ch == ')' || ch == ']') {
+                    --depth;
+                    cur.push_back(ch);
+                } else if (ch == ',' && depth == 0) {
+                    elements.push_back(fromString(cur));
+                    cur.clear();
+                } else {
+                    cur.push_back(ch);
+                }
+            }
+            if (!cur.empty()) {
+                elements.push_back(fromString(cur));
+            }
+        }
+        return tupleType(elements);
+    }
+
     size_t angle = s.find('<');
     if (angle != std::string::npos) {
         std::string base = s.substr(0, angle);
@@ -334,6 +372,15 @@ std::string TypeContext::toString(TypeRef type) const {
         case Kind::Any: return "any";
         case Kind::Object: return "object";
         case Kind::Closure: return "closure(" + toString(type->element) + ")";
+        case Kind::Tuple: {
+            std::string s = "(";
+            for (size_t i = 0; i < type->params.size(); ++i) {
+                if (i) s += ", ";
+                s += toString(type->params[i]);
+            }
+            s += ")";
+            return s;
+        }
     }
     return "<?>";
 }
@@ -374,6 +421,13 @@ bool TypeContext::equals(TypeRef a, TypeRef b) {
         }
         case Kind::Closure:
             return equals(a->element, b->element);
+        case Kind::Tuple: {
+            if (a->params.size() != b->params.size()) return false;
+            for (size_t i = 0; i < a->params.size(); ++i) {
+                if (!equals(a->params[i], b->params[i])) return false;
+            }
+            return true;
+        }
         default:
             return true;
     }

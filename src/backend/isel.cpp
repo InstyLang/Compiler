@@ -315,7 +315,8 @@ bool InstructionSelector::isSliceType(Types::TypeRef t) const {
 bool InstructionSelector::isAggregateType(Types::TypeRef t) const {
     return t && (t->kind == Types::Kind::Struct ||
                  t->kind == Types::Kind::Class ||
-                 t->kind == Types::Kind::Slice);
+                 t->kind == Types::Kind::Slice ||
+                 t->kind == Types::Kind::Tuple);
 }
 
 const Sema::SumTypeInfo* InstructionSelector::sumTypeByName(const std::string& name) const {
@@ -542,6 +543,11 @@ unsigned InstructionSelector::alignOf(Types::TypeRef t) const {
     if (t->kind == Types::Kind::Any) return 8;
     if (t->kind == Types::Kind::Object) return 8;
     if (t->kind == Types::Kind::Closure) return 8;
+    if (t->kind == Types::Kind::Tuple) {
+        unsigned a = 1;
+        for (Types::TypeRef elem : t->params) a = std::max(a, alignOf(elem));
+        return a;
+    }
     return widthOf(t);
 }
 
@@ -566,6 +572,16 @@ unsigned InstructionSelector::sizeOf(Types::TypeRef t) const {
             unsigned fa = si->packed ? 1 : alignOf(f.second);
             off = alignUp(off, fa);
             off += sizeOf(f.second);
+            maxAlign = std::max(maxAlign, fa);
+        }
+        return alignUp(off, maxAlign);
+    }
+    if (t->kind == Types::Kind::Tuple) {
+        unsigned off = 0, maxAlign = 1;
+        for (Types::TypeRef elem : t->params) {
+            unsigned fa = alignOf(elem);
+            off = alignUp(off, fa);
+            off += sizeOf(elem);
             maxAlign = std::max(maxAlign, fa);
         }
         return alignUp(off, maxAlign);
@@ -596,6 +612,27 @@ bool InstructionSelector::fieldOffsetOf(Types::TypeRef structTy, const std::stri
             offsetOut = 8;
             fieldTyOut = nullptr;
             return true;
+        }
+        return false;
+    }
+    if (structTy && structTy->kind == Types::Kind::Tuple) {
+        try {
+            size_t targetIdx = std::stoul(field);
+            if (targetIdx >= structTy->params.size()) return false;
+            unsigned off = 0;
+            for (size_t i = 0; i < structTy->params.size(); ++i) {
+                Types::TypeRef elem = structTy->params[i];
+                unsigned fa = alignOf(elem);
+                off = alignUp(off, fa);
+                if (i == targetIdx) {
+                    offsetOut = static_cast<std::int64_t>(off);
+                    fieldTyOut = elem;
+                    return true;
+                }
+                off += sizeOf(elem);
+            }
+        } catch (...) {
+            return false;
         }
         return false;
     }
@@ -1626,12 +1663,7 @@ void InstructionSelector::selVarDecl(const AST::VariableDeclarationExpr& decl) {
     // is addressed (never value-loaded). Field assignments write through its slot
     // address; an initializer copy-initializes the slot (construct-in-place for a
     // constructor call, otherwise a byte copy from the source aggregate lvalue).
-    if (ty && (ty->kind == Types::Kind::Struct || ty->kind == Types::Kind::Class)) {
-        const Sema::StructInfo* si = structInfoFor(ty);
-        if (!si) {
-            fail("selector: unknown struct type for '" + decl.identifier + "'");
-            return;
-        }
+    if (ty && (ty->kind == Types::Kind::Struct || ty->kind == Types::Kind::Class || ty->kind == Types::Kind::Tuple)) {
         unsigned sz = sizeOf(ty);
         unsigned al = alignOf(ty);
         std::uint32_t slot = fn_->addFrameSlot(sz ? sz : 8, al ? al : 8, /*isSpill=*/false);
@@ -1640,11 +1672,49 @@ void InstructionSelector::selVarDecl(const AST::VariableDeclarationExpr& decl) {
         if (decl.initialValue) {
             VReg dstAddr = fn_->newVReg();
             emit({MOpcode::LeaSlot, {MOperand::defVReg(dstAddr), MOperand::slot(slot)}});
-            // `var x = T(...)` / `var x = f()`: construct/return-into-place
-            // (copy-elision) so a class with a destructor is built directly in x
-            // and destroyed exactly once. Otherwise copy-init from an aggregate
-            // lvalue (var s = other).
-            if (!emitAggregatePrvalueInPlace(decl.initialValue, dstAddr)) {
+            if (decl.initialValue->nodeType() == AST::NodeType::TupleLiteral) {
+                const auto& tl = static_cast<const AST::TupleLiteral&>(*decl.initialValue);
+                std::int64_t off = 0;
+                for (size_t i = 0; i < tl.elements.size() && i < ty->params.size(); ++i) {
+                    Types::TypeRef elemTy = ty->params[i];
+                    unsigned fa = alignOf(elemTy);
+                    off = alignUp(off, fa);
+                    const auto& elemExpr = tl.elements[i];
+                    Types::TypeRef exprTy = concreteTypeOf(elemExpr.get());
+
+                    VReg v = selExpr(elemExpr);
+                    if (failed_) return;
+                    if (isFloatType(elemTy)) {
+                        if (exprTy && isFloatType(exprTy) && floatWidthOf(exprTy) != floatWidthOf(elemTy)) {
+                            VReg fv = fn_->newVReg(RegClass::XMM);
+                            emitFW(MOpcode::CvtF2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, floatWidthOf(elemTy));
+                            v = fv;
+                        } else if (exprTy && !isFloatType(exprTy) && (exprTy->kind == Types::Kind::Int || exprTy->kind == Types::Kind::Bool)) {
+                            VReg fv = fn_->newVReg(RegClass::XMM);
+                            emitFW(MOpcode::CvtI2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, floatWidthOf(elemTy));
+                            v = fv;
+                        }
+                        emitFW(MOpcode::FStoreInd,
+                               {MOperand::useVReg(dstAddr), MOperand::immediate(off),
+                                MOperand::useVReg(v)},
+                               floatWidthOf(elemTy));
+                    } else {
+                        if (exprTy && isIntegerLike(exprTy) && isIntegerLike(elemTy) && widthOf(exprTy) < widthOf(elemTy)) {
+                            MInst ext{MOpcode::Ext, {MOperand::useDefVReg(v)}};
+                            ext.width = static_cast<std::uint8_t>(widthOf(exprTy));
+                            ext.isSigned = isSignedOf(exprTy);
+                            emit(ext);
+                        }
+                        MInst st{MOpcode::StoreInd,
+                                 {MOperand::useVReg(dstAddr), MOperand::immediate(off),
+                                  MOperand::useVReg(v)}};
+                        st.width = static_cast<std::uint8_t>(widthOf(elemTy));
+                        st.isSigned = isSignedOf(elemTy);
+                        emit(st);
+                    }
+                    off += sizeOf(elemTy);
+                }
+            } else if (!emitAggregatePrvalueInPlace(decl.initialValue, dstAddr)) {
                 ElemAddr src = computeLValueAddr(decl.initialValue.get());
                 if (failed_) return;
                 emitStructCopy(ElemAddr{dstAddr, 0}, src, sz);
@@ -1716,14 +1786,20 @@ void InstructionSelector::selDestructure(const AST::DestructureStatement& destr)
     ElemAddr srcAddr = computeLValueAddr(destr.value.get());
     if (failed_) return;
 
-    const Sema::StructInfo* si = structInfoFor(valTy);
-    if (!si) return;
+    std::vector<Types::TypeRef> fieldTypes;
+    if (valTy->kind == Types::Kind::Tuple) {
+        fieldTypes = valTy->params;
+    } else {
+        const Sema::StructInfo* si = structInfoFor(valTy);
+        if (!si) return;
+        for (const auto& f : si->fields) fieldTypes.push_back(f.second);
+    }
 
     std::int64_t off = 0;
-    for (size_t i = 0; i < destr.bindings.size() && i < si->fields.size(); ++i) {
+    for (size_t i = 0; i < destr.bindings.size() && i < fieldTypes.size(); ++i) {
         const auto& b = destr.bindings[i];
-        Types::TypeRef fty = si->fields[i].second;
-        unsigned fa = si->packed ? 1 : alignOf(fty);
+        Types::TypeRef fty = fieldTypes[i];
+        unsigned fa = alignOf(fty);
         off = alignUp(off, fa);
 
         if (isFloatType(fty)) {
@@ -5687,6 +5763,7 @@ bool InstructionSelector::isAggregatePrvalueTemp(const AST::ExprAST* node) {
     switch (node->nodeType()) {
         case AST::NodeType::FunctionCall:        // ctor call / struct-returning call
         case AST::NodeType::StructInstantiation: // Point{ ... }
+        case AST::NodeType::TupleLiteral:        // (a, b)
         case AST::NodeType::ArrayLiteral:        // [a, b, c]
             return true;
         default:
@@ -6028,6 +6105,72 @@ InstructionSelector::materializeStructInstantiation(const AST::StructInstantiati
             st.isSigned = isSignedOf(fieldTy);
             emit(st);
         }
+    }
+    return ElemAddr{baseAddr, 0};
+}
+
+InstructionSelector::ElemAddr
+InstructionSelector::materializeTupleLiteral(const AST::TupleLiteral& lit) {
+    Types::TypeRef ty = concreteTypeOf(&lit);
+    if (!ty || ty->kind != Types::Kind::Tuple) {
+        fail("selector: tuple literal has no tuple type");
+        return {};
+    }
+    unsigned sz = sizeOf(ty);
+    unsigned al = alignOf(ty);
+    std::uint32_t slot = fn_->addFrameSlot(sz ? sz : 8, al ? al : 8, /*isSpill=*/false);
+    VReg baseAddr = fn_->newVReg();
+    emit({MOpcode::LeaSlot, {MOperand::defVReg(baseAddr), MOperand::slot(slot)}});
+
+    std::int64_t off = 0;
+    for (size_t i = 0; i < lit.elements.size() && i < ty->params.size(); ++i) {
+        Types::TypeRef elemTy = ty->params[i];
+        unsigned fa = alignOf(elemTy);
+        off = alignUp(off, fa);
+        const auto& elemExpr = lit.elements[i];
+
+        if (isSliceType(elemTy)) {
+            VReg dst = materializeAddr(ElemAddr{baseAddr, off});
+            if (!emitSliceInitInto(dst, elemTy, elemExpr)) return {};
+        } else if (elemTy && (elemTy->kind == Types::Kind::Struct || elemTy->kind == Types::Kind::Class || elemTy->kind == Types::Kind::Tuple)) {
+            ElemAddr src = computeLValueAddr(elemExpr.get());
+            if (failed_) return {};
+            emitStructCopy(ElemAddr{baseAddr, off}, src, sizeOf(elemTy));
+            if (failed_) return {};
+        } else {
+            VReg v = selExpr(elemExpr);
+            if (failed_) return {};
+            Types::TypeRef exprTy = concreteTypeOf(elemExpr.get());
+            if (isFloatType(elemTy)) {
+                if (exprTy && isFloatType(exprTy) && floatWidthOf(exprTy) != floatWidthOf(elemTy)) {
+                    VReg fv = fn_->newVReg(RegClass::XMM);
+                    emitFW(MOpcode::CvtF2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, floatWidthOf(elemTy));
+                    v = fv;
+                } else if (exprTy && !isFloatType(exprTy) && (exprTy->kind == Types::Kind::Int || exprTy->kind == Types::Kind::Bool)) {
+                    VReg fv = fn_->newVReg(RegClass::XMM);
+                    emitFW(MOpcode::CvtI2F, {MOperand::defVReg(fv), MOperand::useVReg(v)}, floatWidthOf(elemTy));
+                    v = fv;
+                }
+                emitFW(MOpcode::FStoreInd,
+                       {MOperand::useVReg(baseAddr), MOperand::immediate(off),
+                        MOperand::useVReg(v)},
+                       floatWidthOf(elemTy));
+            } else {
+                if (exprTy && isIntegerLike(exprTy) && isIntegerLike(elemTy) && widthOf(exprTy) < widthOf(elemTy)) {
+                    MInst ext{MOpcode::Ext, {MOperand::useDefVReg(v)}};
+                    ext.width = static_cast<std::uint8_t>(widthOf(exprTy));
+                    ext.isSigned = isSignedOf(exprTy);
+                    emit(ext);
+                }
+                MInst st{MOpcode::StoreInd,
+                         {MOperand::useVReg(baseAddr), MOperand::immediate(off),
+                          MOperand::useVReg(v)}};
+                st.width = static_cast<std::uint8_t>(widthOf(elemTy));
+                st.isSigned = isSignedOf(elemTy);
+                emit(st);
+            }
+        }
+        off += sizeOf(elemTy);
     }
     return ElemAddr{baseAddr, 0};
 }
@@ -6902,6 +7045,10 @@ InstructionSelector::computeLValueAddr(const AST::ExprAST* node) {
             return materializeStructInstantiation(
                 static_cast<const AST::StructInstantiation&>(*node));
         }
+        case AST::NodeType::TupleLiteral: {
+            return materializeTupleLiteral(
+                static_cast<const AST::TupleLiteral&>(*node));
+        }
         case AST::NodeType::StringLiteral: {
             return materializeSliceValue(concreteTypeOf(node),
                                          std::make_shared<AST::StringLiteral>(static_cast<const AST::StringLiteral&>(*node)));
@@ -7632,7 +7779,7 @@ bool InstructionSelector::emitAggregatePrvalueInPlace(const AST::NodePtr& init,
     // to the caller's byte copy.
     if (init && init->nodeType() == AST::NodeType::FunctionCall) {
         Types::TypeRef rty = concreteTypeOf(init.get());
-        if (rty && (rty->kind == Types::Kind::Struct || rty->kind == Types::Kind::Class) &&
+        if (rty && (rty->kind == Types::Kind::Struct || rty->kind == Types::Kind::Class || rty->kind == Types::Kind::Tuple) &&
             classifyAggregate(rty).inMemory) {
             pendingAggResultDest_ = destAddr;
             selExpr(init);

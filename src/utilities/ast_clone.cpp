@@ -440,6 +440,12 @@ NodePtr cloneNode(const NodePtr& node) {
             out->value = cloneNode(n.value);
             return out;
         }
+        case NodeType::TupleLiteral: {
+            const auto& n = static_cast<const TupleLiteral&>(*node);
+            auto out = make<TupleLiteral>(n);
+            out->elements = cloneNodeList(n.elements);
+            return out;
+        }
         // Vestigial enum values: no node class declares them (they have no
         // INSTY_NODE_TYPE_OF entry), so no node can report them. Indexing is a
         // MemberAccessExpr with `computed` set, handled above.

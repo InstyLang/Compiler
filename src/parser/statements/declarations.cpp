@@ -12,13 +12,25 @@ size_t scanType(Parser& parser, size_t i, bool& ok) {
     }
 
     TokenType t = parser.peek(k).type;
-    bool isName = (t == TokenType::Identifier) ||
-                  isPrimitiveTypeName(parser.peek(k).value);
-    if (!isName) {
-        return i;
+    if (t == TokenType::LParen) {
+        int depth = 0;
+        do {
+            TokenType tt = parser.peek(k).type;
+            if (tt == TokenType::LParen) ++depth;
+            else if (tt == TokenType::RParen) --depth;
+            else if (tt == TokenType::EndOfFile) break;
+            ++k;
+        } while (depth > 0);
+        ok = true;
+    } else {
+        bool isName = (t == TokenType::Identifier) ||
+                      isPrimitiveTypeName(parser.peek(k).value);
+        if (!isName) {
+            return i;
+        }
+        ++k;
+        ok = true;
     }
-    ++k;
-    ok = true;
 
     while (parser.peek(k).type == TokenType::Dot &&
            parser.peek(k + 1).type == TokenType::Identifier) {
@@ -62,6 +74,7 @@ bool ecxLooksLikeVariableDecl(Parser& parser) {
     TokenType t = parser.current().type;
     bool startsType = (t == TokenType::Identifier) ||
                       (t == TokenType::KwVolatile) ||
+                      (t == TokenType::LParen) ||
                       isPrimitiveTypeName(parser.current().value);
     if (!startsType) {
         return false;

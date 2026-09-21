@@ -674,6 +674,15 @@ void testNewLanguageFeatures() {
 
     // 4. Destructuring parsing and sema
     CHECK(parseClean("module test\nstruct P { i32 x, i32 y }\nfun run() -> void { P p; (i32 a, i32 b) = p\n }\n"));
+
+    // 5. Tuple types & literals
+    Types::TypeContext tc;
+    Types::TypeRef tup = tc.fromString("(i32, text, f32)");
+    CHECK(tup != nullptr);
+    CHECK(tup->kind == Types::Kind::Tuple);
+    CHECK(tup->params.size() == 3);
+    CHECK(tc.toString(tup) == "(i32, text, f32)");
+    CHECK(parseClean("module test\nfun get() -> (i32, i32) { return (1, 2) }\nfun run() -> void { (i32, i32) t = get(); (i32 a, i32 b) = t\n }\n"));
 }
 
 }

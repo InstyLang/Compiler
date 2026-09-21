@@ -25,7 +25,8 @@ enum class Kind {
     Error,
     Any,
     Object,
-    Closure
+    Closure,
+    Tuple
 };
 
 struct Type;
@@ -83,6 +84,7 @@ public:
     TypeRef arrayType(TypeRef element, int64_t length);
     TypeRef sliceType(TypeRef element);
     TypeRef functionType(const std::vector<TypeRef>& params, TypeRef returnType);
+    TypeRef tupleType(const std::vector<TypeRef>& elements);
     TypeRef namedType(Kind kind, const std::string& name);
 
     TypeRef fromString(const std::string& spelling);

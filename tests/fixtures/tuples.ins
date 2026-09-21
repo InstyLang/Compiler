@@ -1,0 +1,15 @@
+module main
+
+fun main() -> i32 {
+    (i32, text) t1 = (100, "hello")
+    i32 a = t1.0
+    text s = t1.1
+
+    (i64, i64, i64) t2 = (10, 20, 30)
+    (i64 x, i64 y, i64 z) = t2
+
+    if a == 100 && (x + y + z) == 60 {
+        return 42
+    }
+    return 1
+}

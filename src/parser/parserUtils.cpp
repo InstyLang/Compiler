@@ -128,7 +128,23 @@ std::string Parser::parseTypeName() {
         spelling += "volatile ";
     }
 
-    if (check(TokenType::Identifier) || isPrimitiveTypeName(current().value)) {
+    if (check(TokenType::LParen)) {
+        advance();
+        spelling += "(";
+        bool firstElem = true;
+        while (!atEnd() && !check(TokenType::RParen)) {
+            if (!firstElem) {
+                expect(TokenType::Comma, "E1118", "',' between tuple element types");
+                match(TokenType::Comma);
+                spelling += ", ";
+            }
+            firstElem = false;
+            spelling += parseTypeName();
+        }
+        expect(TokenType::RParen, "E1119", "')' to close tuple type");
+        match(TokenType::RParen);
+        spelling += ")";
+    } else if (check(TokenType::Identifier) || isPrimitiveTypeName(current().value)) {
         std::string ident = current().value;
         spelling += ident;
         advance();

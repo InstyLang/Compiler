@@ -63,6 +63,7 @@ enum class NodeType {
     CompileTimeIf,
     TypeAliasDeclaration,
     DestructureStatement,
+    TupleLiteral,
 
     Unknown
 };
@@ -352,6 +353,11 @@ struct ObjectLiteral : ExprAST {
     NodeType nodeType() const override { return NodeType::ObjectLiteral; }
 };
 
+struct TupleLiteral : ExprAST {
+    NodeList elements;
+    NodeType nodeType() const override { return NodeType::TupleLiteral; }
+};
+
 struct FieldValue {
     std::string name;
     NodePtr value;
@@ -557,6 +563,7 @@ INSTY_NODE_TYPE_OF(ImplBlock, ImplBlock)
 INSTY_NODE_TYPE_OF(CompileTimeIfExpr, CompileTimeIf)
 INSTY_NODE_TYPE_OF(TypeAliasDeclaration, TypeAliasDeclaration)
 INSTY_NODE_TYPE_OF(DestructureStatement, DestructureStatement)
+INSTY_NODE_TYPE_OF(TupleLiteral, TupleLiteral)
 
 #undef INSTY_NODE_TYPE_OF
 

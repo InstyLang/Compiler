@@ -251,10 +251,29 @@ AST::NodePtr Parser::parsePrimary() {
         }
         case TokenType::LParen: {
             advance();
-            AST::NodePtr inner = parseExpression();
+            // Empty tuple: `()`
+            if (check(TokenType::RParen)) {
+                advance();
+                auto node = std::make_shared<AST::TupleLiteral>();
+                fillRange(*node, start, previous());
+                return node;
+            }
+            AST::NodePtr first = parseExpression();
+            if (check(TokenType::Comma)) {
+                // Multi-element tuple literal: `(a, b, ...)`
+                auto node = std::make_shared<AST::TupleLiteral>();
+                node->elements.push_back(first);
+                while (match(TokenType::Comma) && !check(TokenType::RParen)) {
+                    node->elements.push_back(parseExpression());
+                }
+                expect(TokenType::RParen, "E1300", "')' to close tuple");
+                match(TokenType::RParen);
+                fillRange(*node, start, previous());
+                return node;
+            }
             expect(TokenType::RParen, "E1300", "')' to close grouping");
             match(TokenType::RParen);
-            return inner;
+            return first;
         }
         case TokenType::LBrace: {
             return ecxParseObjectLiteral(*this);

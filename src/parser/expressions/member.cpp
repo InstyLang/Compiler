@@ -14,7 +14,8 @@ AST::NodePtr buildAccess(Parser& parser, AST::NodePtr object, bool scope) {
 
     auto prop = std::make_shared<AST::IdentifierExpr>();
     const Token& nameTok = parser.current();
-    if (parser.check(TokenType::Identifier) || parser.check(TokenType::KwThis)) {
+    if (parser.check(TokenType::Identifier) || parser.check(TokenType::KwThis) ||
+        (!scope && parser.check(TokenType::IntegerLiteral))) {
         prop->name = nameTok.value;
         parser.advance();
     } else if (scope) {
