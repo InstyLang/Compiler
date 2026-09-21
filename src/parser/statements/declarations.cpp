@@ -96,3 +96,48 @@ AST::NodePtr Parser::parseTypeAliasDeclaration() {
     fillRange(*node, start, previous());
     return node;
 }
+
+AST::NodePtr Parser::parseDestructureStatement() {
+    const Token& start = current();
+    expect(TokenType::LParen, "E1113", "'(' to open destructuring bindings");
+    match(TokenType::LParen);
+
+    auto node = std::make_shared<AST::DestructureStatement>();
+    bool first = true;
+    while (!atEnd() && !check(TokenType::RParen)) {
+        if (!first) {
+            expect(TokenType::Comma, "E1114", "',' between destructuring bindings");
+            match(TokenType::Comma);
+        }
+        first = false;
+        skipNewlines();
+        AST::DestructureBinding b;
+        if (check(TokenType::Identifier)) {
+            std::string t1 = current().value;
+            advance();
+            if (check(TokenType::Identifier)) {
+                b.typeHint = t1;
+                b.name = current().value;
+                advance();
+            } else {
+                b.name = t1;
+            }
+        } else {
+            b.typeHint = parseTypeName();
+            if (check(TokenType::Identifier)) {
+                b.name = current().value;
+                advance();
+            }
+        }
+        node->bindings.push_back(std::move(b));
+    }
+    expect(TokenType::RParen, "E1115", "')' to close destructuring bindings");
+    match(TokenType::RParen);
+
+    expect(TokenType::Assign, "E1116", "'=' after destructuring bindings");
+    match(TokenType::Assign);
+
+    node->value = parseExpression();
+    fillRange(*node, start, previous());
+    return node;
+}

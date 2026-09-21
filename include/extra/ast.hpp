@@ -62,6 +62,7 @@ enum class NodeType {
     ImplBlock,
     CompileTimeIf,
     TypeAliasDeclaration,
+    DestructureStatement,
 
     Unknown
 };
@@ -241,6 +242,8 @@ struct BoolLiteral : ExprAST {
 struct StringLiteral : ExprAST {
     std::string value;
     bool hasInterpolation = false;
+    bool isRaw = false;   // `...` raw string (no escapes, multiline)
+    bool isByte = false;  // b"..." byte slice literal (type u8[])
     std::vector<std::string> literalParts;
     NodeList exprParts;
     NodeType nodeType() const override { return NodeType::StringLiteral; }
@@ -489,6 +492,17 @@ struct TypeAliasDeclaration : ExprAST {
     NodeType nodeType() const override { return NodeType::TypeAliasDeclaration; }
 };
 
+struct DestructureBinding {
+    std::string typeHint; // e.g. "i32" or "" for inferred
+    std::string name;
+};
+
+struct DestructureStatement : ExprAST {
+    std::vector<DestructureBinding> bindings;
+    NodePtr value;
+    NodeType nodeType() const override { return NodeType::DestructureStatement; }
+};
+
 
 template <typename T>
 NodeType nodeTypeOf();
@@ -542,6 +556,7 @@ INSTY_NODE_TYPE_OF(ClassDeclaration, ClassDeclaration)
 INSTY_NODE_TYPE_OF(ImplBlock, ImplBlock)
 INSTY_NODE_TYPE_OF(CompileTimeIfExpr, CompileTimeIf)
 INSTY_NODE_TYPE_OF(TypeAliasDeclaration, TypeAliasDeclaration)
+INSTY_NODE_TYPE_OF(DestructureStatement, DestructureStatement)
 
 #undef INSTY_NODE_TYPE_OF
 

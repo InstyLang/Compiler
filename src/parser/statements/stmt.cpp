@@ -100,6 +100,20 @@ AST::NodePtr Parser::parseStatement() {
             fillRange(*node, start, start);
             return node;
         }
+        case TokenType::LParen: {
+            // Check if this looks like `(a, b) = ...` destructuring
+            size_t k = 1;
+            int depth = 1;
+            while (depth > 0 && peek(k).type != TokenType::EndOfFile) {
+                if (peek(k).type == TokenType::LParen) ++depth;
+                else if (peek(k).type == TokenType::RParen) --depth;
+                ++k;
+            }
+            if (peek(k).type == TokenType::Assign) {
+                return parseDestructureStatement();
+            }
+            break;
+        }
         default:
             break;
     }

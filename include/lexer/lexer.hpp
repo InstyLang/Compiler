@@ -10,6 +10,8 @@ enum class TokenType {
     IntegerLiteral,
     FloatLiteral,
     StringLiteral,
+    ByteStringLiteral,
+    RawStringLiteral,
     CharLiteral,
 
     KwModule,
@@ -134,6 +136,7 @@ private:
     void lexNumber(std::vector<Token>& out);
     void lexIdentifierOrKeyword(std::vector<Token>& out);
     void lexString(std::vector<Token>& out);
+    void lexRawString(std::vector<Token>& out);
     void lexChar(std::vector<Token>& out);
     void lexOperator(std::vector<Token>& out);
 };

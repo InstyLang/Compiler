@@ -18,6 +18,8 @@ enum class Builtin {
     TargetIs,
     Utf16,
     Hash,
+    EmbedFile,
+    EmbedBytes,
     Unknown
 };
 

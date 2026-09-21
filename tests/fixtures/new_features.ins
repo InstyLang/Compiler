@@ -1,0 +1,47 @@
+module main
+
+import std::io
+
+// 1. UFCS target functions
+fun inc(i64 x) -> i64 { return x + 1 }
+fun double_it(i64 x) -> i64 { return x * 2 }
+
+struct Vec2 {
+    i64 x,
+    i64 y
+}
+
+fun mag_sq(Vec2 v) -> i64 {
+    return v.x * v.x + v.y * v.y
+}
+
+fun make_vec(i64 x, i64 y) -> Vec2 {
+    return Vec2{ x: x, y: y }
+}
+
+fun main() -> i32 {
+    // Feature 3: Raw string literal and Byte string literal
+    text raw = `multi
+line
+raw string`
+    u8[] bstring = b"INSTY\x00"
+
+    // Feature 4: Compile-time embed
+    text self_content = @embedFile("C:\\Users\\sky\\AppData\\Local\\Temp\\opencode\\hello_embed.txt")
+
+    // Feature 7: UFCS chaining on primitives & structs
+    i64 n = 5
+    i64 ufcs_res = n.inc().double_it() // (5 + 1) * 2 = 12
+
+    Vec2 v = Vec2{ x: 3, y: 4 }
+    i64 mag = v.mag_sq() // 25
+
+    // Feature 5: Destructuring
+    (i64 vx, i64 vy) = v
+    (i64 px, i64 py) = make_vec(20, 22)
+
+    if bstring.len == 6 && ufcs_res == 12 && mag == 25 && (vx + vy) == 7 && (px + py) == 42 {
+        return 42
+    }
+    return 1
+}

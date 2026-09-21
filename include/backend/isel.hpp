@@ -254,6 +254,7 @@ private:
     void selBlock(const AST::NodeList& body);
     void selReturn(const AST::ReturnStatement& ret);
     void selVarDecl(const AST::VariableDeclarationExpr& decl);
+    void selDestructure(const AST::DestructureStatement& destr);
     void selAssign(const AST::AssignmentExpr& a);
     void selIf(const AST::IfStatement& s);
     void selWhile(const AST::WhileLoop& s);

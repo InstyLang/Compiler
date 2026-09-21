@@ -434,6 +434,12 @@ NodePtr cloneNode(const NodePtr& node) {
             const auto& n = static_cast<const TypeAliasDeclaration&>(*node);
             return make<TypeAliasDeclaration>(n);
         }
+        case NodeType::DestructureStatement: {
+            const auto& n = static_cast<const DestructureStatement&>(*node);
+            auto out = make<DestructureStatement>(n);
+            out->value = cloneNode(n.value);
+            return out;
+        }
         // Vestigial enum values: no node class declares them (they have no
         // INSTY_NODE_TYPE_OF entry), so no node can report them. Indexing is a
         // MemberAccessExpr with `computed` set, handled above.

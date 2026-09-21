@@ -10,7 +10,9 @@ std::string tokenTypeName(TokenType type) {
         case TokenType::Identifier:      return "Identifier";
         case TokenType::IntegerLiteral:  return "IntegerLiteral";
         case TokenType::FloatLiteral:    return "FloatLiteral";
-        case TokenType::StringLiteral:   return "StringLiteral";
+        case TokenType::StringLiteral:     return "StringLiteral";
+        case TokenType::ByteStringLiteral: return "ByteStringLiteral";
+        case TokenType::RawStringLiteral:  return "RawStringLiteral";
         case TokenType::CharLiteral:     return "CharLiteral";
 
         case TokenType::KwModule:        return "KwModule";

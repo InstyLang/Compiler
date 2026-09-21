@@ -67,6 +67,7 @@ public:
     Types::TypeRef checkExpr(const AST::NodePtr& node);
 
     void checkVarDecl(AST::VariableDeclarationExpr* node);
+    void checkDestructure(AST::DestructureStatement* node);
     void checkAssignment(AST::AssignmentExpr* node);
     void checkIf(AST::IfStatement* node);
     void checkWhile(AST::WhileLoop* node);
@@ -140,6 +141,7 @@ private:
 
     std::multimap<std::string, FunctionInfo> functionTable_;
     std::vector<FunctionInfo> importedStore_;
+    std::vector<std::string> moduleImports_;
 
     std::map<std::string, AST::FunctionDeclaration*> genericTemplates_;
     std::map<std::string, AST::ClassDeclaration*> genericClassTemplates_;

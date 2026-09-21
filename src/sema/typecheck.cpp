@@ -1,5 +1,6 @@
 #include <sema/checker.hpp>
 
+#include <iostream>
 #include <cctype>
 #include <memory>
 #include <set>
@@ -713,6 +714,9 @@ void Checker::checkStatement(const AST::NodePtr& node) {
         case AST::NodeType::VariableDeclaration:
             checkVarDecl(static_cast<AST::VariableDeclarationExpr*>(node.get()));
             break;
+        case AST::NodeType::DestructureStatement:
+            checkDestructure(static_cast<AST::DestructureStatement*>(node.get()));
+            break;
         case AST::NodeType::AssignmentExpr:
             checkAssignment(static_cast<AST::AssignmentExpr*>(node.get()));
             break;
@@ -812,6 +816,36 @@ void Checker::checkVarDecl(AST::VariableDeclarationExpr* node) {
 
     declareLocal(node->identifier, finalType, node);
     record(node, finalType);
+}
+
+void Checker::checkDestructure(AST::DestructureStatement* node) {
+    if (!node) return;
+    Types::TypeRef valType = node->value ? checkExpr(node->value) : types_.errorType();
+    if (!valType || valType->isError()) return;
+
+    if (valType->kind == Types::Kind::Struct || valType->kind == Types::Kind::Class) {
+        // Look up struct field types
+        std::vector<Types::TypeRef> fieldTypes;
+        for (const auto& s : result_.structs) {
+            if (s.name == valType->name) {
+                for (const auto& f : s.fields) fieldTypes.push_back(f.second);
+                break;
+            }
+        }
+        for (size_t i = 0; i < node->bindings.size(); ++i) {
+            auto& b = node->bindings[i];
+            Types::TypeRef declT = b.typeHint.empty() ? nullptr : resolveTypeSpelling(b.typeHint, node);
+            Types::TypeRef actualT = i < fieldTypes.size() ? fieldTypes[i] : types_.errorType();
+            Types::TypeRef finalT = declT ? declT : actualT;
+            if (declT && actualT && !declT->isError() && !actualT->isError()) {
+                if (!isAssignable(declT, actualT, nullptr)) {
+                    emit("E2005", "cannot bind '" + b.name + "' of type " + types_.toString(declT) +
+                                  " with field of type " + types_.toString(actualT), node, "");
+                }
+            }
+            declareLocal(b.name, finalT, node);
+        }
+    }
 }
 
 void Checker::checkAssignment(AST::AssignmentExpr* node) {
@@ -1156,6 +1190,9 @@ Types::TypeRef Checker::checkExpr(const AST::NodePtr& node) {
             if (sl->hasInterpolation) {
                 checkInterpolation(sl);
             }
+            if (sl->isByte) {
+                return record(raw, types_.sliceType(types_.intType(8, false)));
+            }
             return record(raw, types_.textType());
         }
         case AST::NodeType::IdentifierExpr:
@@ -1409,9 +1446,8 @@ Types::TypeRef Checker::checkShift(AST::ShiftOperationExpr* node) {
 }
 
 
-Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
+    Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
     if (!node) return types_.errorType();
-    for (const auto& arg : node->arguments) checkExpr(arg);
 
     std::string name;
     AST::ExprAST* calleeNode = node->callee ? node->callee.get() : nullptr;
@@ -1425,6 +1461,54 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
             }
         }
     }
+
+    // Check for UFCS before checking normal free function call
+    if (calleeNode && calleeNode->nodeType() == AST::NodeType::MemberAccess) {
+        auto* m = static_cast<AST::MemberAccessExpr*>(calleeNode);
+        if (!m->computed && m->object && !m->isScope) {
+            // If the object is an identifier naming an imported module, this is module::func or module.func, NOT UFCS!
+            bool isModuleObject = false;
+            if (m->object->nodeType() == AST::NodeType::IdentifierExpr) {
+                const std::string& objIdent = static_cast<AST::IdentifierExpr*>(m->object.get())->name;
+                for (const auto& imp : moduleImports_) {
+                    if (imp == objIdent) {
+                        isModuleObject = true;
+                        break;
+                    }
+                    auto pos = imp.rfind("::");
+                    if (pos != std::string::npos && imp.substr(pos + 2) == objIdent) {
+                        isModuleObject = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!isModuleObject) {
+                auto ufcsRange = functionTable_.equal_range(name);
+                if (ufcsRange.first != ufcsRange.second) {
+                    Types::TypeRef objType = checkExpr(m->object);
+                    if (objType && !objType->isError()) {
+                        for (auto cand = ufcsRange.first; cand != ufcsRange.second; ++cand) {
+                            const auto& fn = cand->second;
+                            if (fn.paramTypes.size() == node->arguments.size() + 1) {
+                                if (isAssignable(fn.paramTypes[0], objType, m->object) ||
+                                    isSliceInitializer(fn.paramTypes[0], objType, m->object)) {
+                                    auto idCallee = std::make_shared<AST::IdentifierExpr>();
+                                    idCallee->name = name;
+                                    idCallee->range = m->range;
+                                    node->arguments.insert(node->arguments.begin(), m->object);
+                                    node->callee = idCallee;
+                                    return checkCall(node);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (const auto& arg : node->arguments) checkExpr(arg);
 
     // Sum-type variant construction: `E.Variant(args)`. The callee is a member
     // access whose object names a sum type; the result is a value of that type.
@@ -1655,13 +1739,34 @@ Types::TypeRef Checker::checkCall(AST::FunctionCallExpr* node) {
                             }
                             return record(node, types_.voidType());
                         }
-                        if (!alreadyErrored(node)) {
-                            emit("E2002", "class '" + ci.name +
-                                              "' has no method '" + name + "'",
-                                 node, "");
-                            markErrored(node);
+                        // Fall through to UFCS if class has no method by this name
+                        break;
+                    }
+                }
+            }
+
+            // Uniform Function Call Syntax (UFCS):
+            // Rewrite `obj.func(args...)` to `func(obj, args...)` when `obj` is NOT a scope/module path
+            // and `func` is a declared free function whose first parameter accepts `obj`.
+            if (!m->isScope && !isScopePath(m->object.get())) {
+                auto ufcsRange = functionTable_.equal_range(name);
+                if (ufcsRange.first != ufcsRange.second) {
+                    objType = checkExpr(m->object);
+                    if (objType && !objType->isError()) {
+                        for (auto cand = ufcsRange.first; cand != ufcsRange.second; ++cand) {
+                            const auto& fn = cand->second;
+                            if (fn.paramTypes.size() == node->arguments.size() + 1) {
+                                if (isAssignable(fn.paramTypes[0], objType, m->object) ||
+                                    isSliceInitializer(fn.paramTypes[0], objType, m->object)) {
+                                    auto idCallee = std::make_shared<AST::IdentifierExpr>();
+                                    idCallee->name = name;
+                                    idCallee->range = m->range;
+                                    node->arguments.insert(node->arguments.begin(), m->object);
+                                    node->callee = idCallee;
+                                    return checkCall(node);
+                                }
+                            }
                         }
-                        return record(node, types_.errorType());
                     }
                 }
             }
@@ -1881,6 +1986,22 @@ Types::TypeRef Checker::checkBuiltin(AST::BuiltinCallExpr* node) {
                 }
             }
             return record(node, types_.pointerType(types_.intType(16, false)));
+        case Builtins::Builtin::EmbedFile: {
+            if (node->arguments.empty() ||
+                node->arguments.front()->nodeType() != AST::NodeType::StringLiteral) {
+                emit("E2016", "@embedFile requires a string literal file path", node,
+                     "e.g. @embedFile(\"path/to/file.txt\")");
+            }
+            return record(node, types_.textType());
+        }
+        case Builtins::Builtin::EmbedBytes: {
+            if (node->arguments.empty() ||
+                node->arguments.front()->nodeType() != AST::NodeType::StringLiteral) {
+                emit("E2016", "@embedBytes requires a string literal file path", node,
+                     "e.g. @embedBytes(\"path/to/file.bin\")");
+            }
+            return record(node, types_.sliceType(types_.intType(8, false)));
+        }
         default:
             return record(node, types_.voidType());
     }

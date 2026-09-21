@@ -655,6 +655,27 @@ void testComptimeVM() {
     CHECK(res.i == 15);
 }
 
+void testNewLanguageFeatures() {
+    // 1. Raw string literals
+    Lexer lexer;
+    auto rawTokens = lexer.tokenize("`hello\nworld`");
+    CHECK(rawTokens.size() == 2); // RawStringLiteral + EOF
+    CHECK(rawTokens[0].type == TokenType::RawStringLiteral);
+    CHECK(rawTokens[0].value == "hello\nworld");
+
+    // 2. Byte string literals
+    auto byteTokens = lexer.tokenize("b\"abc\"");
+    CHECK(byteTokens.size() == 2); // ByteStringLiteral + EOF
+    CHECK(byteTokens[0].type == TokenType::ByteStringLiteral);
+    CHECK(byteTokens[0].value == "abc");
+
+    // 3. UFCS parsing and sema
+    CHECK(parseClean("module test\nfun inc(i32 x) -> i32 { return x + 1 }\nfun run() -> i32 { i32 n = 5; return n.inc() }\n"));
+
+    // 4. Destructuring parsing and sema
+    CHECK(parseClean("module test\nstruct P { i32 x, i32 y }\nfun run() -> void { P p; (i32 a, i32 b) = p\n }\n"));
+}
+
 }
 
 int main() {
@@ -665,6 +686,7 @@ int main() {
     testFuncTypes();
     testTypeAliases();
     testComptimeVM();
+    testNewLanguageFeatures();
 
     std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
     if (g_failures > 0) {

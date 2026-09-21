@@ -198,6 +198,20 @@ std::vector<Token> Lexer::tokenize(const std::string& source) {
             continue;
         }
 
+        if (c == 'b' && peek(1) == '"') {
+            advance(); // consume 'b'
+            lexString(out);
+            if (!out.empty() && out.back().type == TokenType::StringLiteral) {
+                out.back().type = TokenType::ByteStringLiteral;
+            }
+            continue;
+        }
+
+        if (c == '`') {
+            lexRawString(out);
+            continue;
+        }
+
         if (isIdentStart(c)) {
             lexIdentifierOrKeyword(out);
             continue;
@@ -407,6 +421,41 @@ void Lexer::lexString(std::vector<Token>& out) {
     }
 
     out.push_back(makeToken(TokenType::StringLiteral, std::move(decoded),
+                            startOffset, startLine, startColumn));
+}
+
+void Lexer::lexRawString(std::vector<Token>& out) {
+    int startOffset = static_cast<int>(pos_);
+    int startLine = line_;
+    int startColumn = column_;
+
+    advance(); // consume opening '`'
+
+    std::string text;
+    bool terminated = false;
+
+    while (!atEnd()) {
+        char c = peek();
+        if (c == '`') {
+            advance();
+            terminated = true;
+            break;
+        }
+        if (c == '\n') {
+            text.push_back(advance());
+            newline();
+            continue;
+        }
+        text.push_back(advance());
+    }
+
+    if (!terminated) {
+        reportInvalid("E0002", "unterminated raw string literal", startLine,
+                      startColumn, static_cast<int>(pos_) - startOffset,
+                      startOffset, "add a closing '`'");
+    }
+
+    out.push_back(makeToken(TokenType::RawStringLiteral, std::move(text),
                             startOffset, startLine, startColumn));
 }
 

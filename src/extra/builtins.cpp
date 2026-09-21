@@ -17,6 +17,8 @@ constexpr BuiltinSpec kSpecs[] = {
     {Builtin::TargetIs,     "targetIs",     1,  1, false, false},
     {Builtin::Utf16,        "utf16",        1,  1, false, true},
     {Builtin::Hash,         "hash",         1,  1, false, true},
+    {Builtin::EmbedFile,    "embedFile",    1,  1, false, true},
+    {Builtin::EmbedBytes,   "embedBytes",   1,  1, false, true},
     {Builtin::Unknown,      "",             0, -1, false, false},
 };
 

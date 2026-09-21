@@ -193,6 +193,22 @@ AST::NodePtr Parser::parsePrimary() {
             fillRange(*node, start, start);
             return node;
         }
+        case TokenType::ByteStringLiteral: {
+            advance();
+            auto node = std::make_shared<AST::StringLiteral>();
+            node->value = start.value;
+            node->isByte = true;
+            fillRange(*node, start, start);
+            return node;
+        }
+        case TokenType::RawStringLiteral: {
+            advance();
+            auto node = std::make_shared<AST::StringLiteral>();
+            node->value = start.value;
+            node->isRaw = true;
+            fillRange(*node, start, start);
+            return node;
+        }
         case TokenType::CharLiteral: {
             advance();
             auto node = std::make_shared<AST::IntegerLiteral>();

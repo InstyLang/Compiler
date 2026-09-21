@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <utility>
 
 namespace Backend {
@@ -1331,6 +1332,10 @@ void InstructionSelector::selStatement(const AST::NodePtr& stmt) {
             selVarDecl(static_cast<const AST::VariableDeclarationExpr&>(*stmt));
             finishStatement();
             return;
+        case AST::NodeType::DestructureStatement:
+            selDestructure(static_cast<const AST::DestructureStatement&>(*stmt));
+            finishStatement();
+            return;
         case AST::NodeType::AssignmentExpr:
             selAssign(static_cast<const AST::AssignmentExpr&>(*stmt));
             finishStatement();
@@ -1700,6 +1705,46 @@ void InstructionSelector::selVarDecl(const AST::VariableDeclarationExpr& decl) {
         MInst st{MOpcode::Store, {MOperand::slot(slot), MOperand::useVReg(v)}};
         st.width = w; st.isSigned = sgn;
         emit(st);
+    }
+}
+
+void InstructionSelector::selDestructure(const AST::DestructureStatement& destr) {
+    if (!destr.value) return;
+    Types::TypeRef valTy = concreteTypeOf(destr.value.get());
+    if (!valTy) return;
+
+    ElemAddr srcAddr = computeLValueAddr(destr.value.get());
+    if (failed_) return;
+
+    const Sema::StructInfo* si = structInfoFor(valTy);
+    if (!si) return;
+
+    std::int64_t off = 0;
+    for (size_t i = 0; i < destr.bindings.size() && i < si->fields.size(); ++i) {
+        const auto& b = destr.bindings[i];
+        Types::TypeRef fty = si->fields[i].second;
+        unsigned fa = si->packed ? 1 : alignOf(fty);
+        off = alignUp(off, fa);
+
+        if (isFloatType(fty)) {
+            std::uint8_t fw = floatWidthOf(fty);
+            std::uint32_t slot = fn_->addFrameSlot(8, 8, false);
+            declareLocal(b.name, slot, fw, false, LocalKind::Scalar, true, fty);
+            VReg val = fn_->newVReg(RegClass::XMM);
+            emitFW(MOpcode::FLoadInd, {MOperand::defVReg(val), MOperand::useVReg(srcAddr.base), MOperand::immediate(srcAddr.disp + off)}, fw);
+            emitFW(MOpcode::FStore, {MOperand::slot(slot), MOperand::useVReg(val)}, fw);
+        } else {
+            std::uint8_t w = static_cast<std::uint8_t>(widthOf(fty));
+            bool sgn = isSignedOf(fty);
+            std::uint32_t slot = fn_->addFrameSlot(8, 8, false);
+            declareLocal(b.name, slot, w, sgn, LocalKind::Scalar, false, fty);
+            VReg val = fn_->newVReg();
+            MInst ld{MOpcode::LoadInd, {MOperand::defVReg(val), MOperand::useVReg(srcAddr.base), MOperand::immediate(srcAddr.disp + off)}};
+            ld.width = w; ld.isSigned = sgn; emit(ld);
+            MInst st{MOpcode::Store, {MOperand::slot(slot), MOperand::useVReg(val)}};
+            st.width = w; st.isSigned = sgn; emit(st);
+        }
+        off += sizeOf(fty);
     }
 }
 
@@ -4548,6 +4593,62 @@ VReg InstructionSelector::selBuiltinCall(const AST::BuiltinCallExpr& call) {
         return v;
     }
 
+    // @embedFile("path"): read file at compile time and intern as null-terminated text
+    if (name == "embedFile") {
+        auto lit = call.arguments.empty() ? nullptr : AST::ast_cast<AST::StringLiteral>(call.arguments[0]);
+        if (!lit) {
+            fail("selector: @embedFile requires a string literal path");
+            return kInvalidVReg;
+        }
+        std::string filePath = lit->value;
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in.is_open()) {
+            fail("selector: @embedFile could not open '" + filePath + "'");
+            return kInvalidVReg;
+        }
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string sym = ".Lstr." + std::to_string(stringCounter_++);
+        fn_->addStringConstant(sym, content);
+        VReg v = fn_->newVReg();
+        emit({MOpcode::Lea, {MOperand::defVReg(v), MOperand::sym(sym)}});
+        return v;
+    }
+
+    // @embedBytes("path"): read file at compile time and return u8[] slice
+    if (name == "embedBytes") {
+        auto lit = call.arguments.empty() ? nullptr : AST::ast_cast<AST::StringLiteral>(call.arguments[0]);
+        if (!lit) {
+            fail("selector: @embedBytes requires a string literal path");
+            return kInvalidVReg;
+        }
+        std::string filePath = lit->value;
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in.is_open()) {
+            fail("selector: @embedBytes could not open '" + filePath + "'");
+            return kInvalidVReg;
+        }
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string sym = ".Lraw." + std::to_string(stringCounter_++);
+        fn_->addRawConstant(sym, content, /*align=*/1);
+
+        // Materialize a 16-byte { ptr, len } slice header
+        std::uint32_t slot = fn_->addFrameSlot(16, 8, /*isSpill=*/false);
+        VReg addr = fn_->newVReg();
+        emit({MOpcode::LeaSlot, {MOperand::defVReg(addr), MOperand::slot(slot)}});
+
+        VReg base = fn_->newVReg();
+        emit({MOpcode::Lea, {MOperand::defVReg(base), MOperand::sym(sym)}});
+        MInst st0{MOpcode::StoreInd, {MOperand::useVReg(addr), MOperand::immediate(0), MOperand::useVReg(base)}};
+        st0.width = 8; st0.isSigned = false; emit(st0);
+
+        VReg len = fn_->newVReg();
+        emit({MOpcode::MovRI, {MOperand::defVReg(len), MOperand::immediate(static_cast<std::int64_t>(content.size()))}});
+        MInst st8{MOpcode::StoreInd, {MOperand::useVReg(addr), MOperand::immediate(8), MOperand::useVReg(len)}};
+        st8.width = 8; st8.isSigned = false; emit(st8);
+
+        return addr;
+    }
+
     // @hash(s): 64-bit hash of a NUL-terminated string. A plain string-literal
     // argument is folded at compile time (identical to __ins_hash_bytes);
     // otherwise the runtime __ins_hash is called on the pointer.
@@ -6022,6 +6123,21 @@ bool InstructionSelector::emitSliceInitInto(VReg destAddr, Types::TypeRef sliceT
         storeField(8, len);
         return true;
     }
+    // Byte string literal (b"..."): points to the static bytes; length is string size.
+    if (init->nodeType() == AST::NodeType::StringLiteral) {
+        const auto& slit = static_cast<const AST::StringLiteral&>(*init);
+        std::string sym = ".Lstr." + std::to_string(stringCounter_++);
+        fn_->addStringConstant(sym, slit.value);
+        VReg base = fn_->newVReg();
+        emit({MOpcode::Lea, {MOperand::defVReg(base), MOperand::sym(sym)}});
+        storeField(0, base);
+        VReg len = fn_->newVReg();
+        emit({MOpcode::MovRI,
+              {MOperand::defVReg(len),
+               MOperand::immediate(static_cast<std::int64_t>(slit.value.size()))}});
+        storeField(8, len);
+        return true;
+    }
     fail("selector: unsupported slice initializer");
     return false;
 }
@@ -6781,10 +6897,20 @@ InstructionSelector::computeLValueAddr(const AST::ExprAST* node) {
             return ElemAddr{addr, 0};
         }
         case AST::NodeType::StructInstantiation: {
-            // A struct literal (Point{ ... }) is materialized into a fresh stack
+            // Point{ ... } (prvalue) materialized into a fresh result/cleanup
             // temp; its address backs the aggregate rvalue.
             return materializeStructInstantiation(
                 static_cast<const AST::StructInstantiation&>(*node));
+        }
+        case AST::NodeType::StringLiteral: {
+            return materializeSliceValue(concreteTypeOf(node),
+                                         std::make_shared<AST::StringLiteral>(static_cast<const AST::StringLiteral&>(*node)));
+        }
+        case AST::NodeType::BuiltinCall: {
+            const auto& b = static_cast<const AST::BuiltinCallExpr&>(*node);
+            VReg addr = selBuiltinCall(b);
+            if (failed_) return {};
+            return ElemAddr{addr, 0};
         }
         case AST::NodeType::ArrayLiteral: {
             // An array literal [a, b, c] is materialized into a fresh stack temp;

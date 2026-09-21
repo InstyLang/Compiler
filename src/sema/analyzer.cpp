@@ -65,6 +65,9 @@ void Checker::run(const std::shared_ptr<AST::ProgramRoot>& program,
                   const std::vector<GlobalInfo>& importedGlobals,
                   const std::vector<std::pair<std::string, std::string>>& importedTypeAliases) {
     importedStore_ = importedFunctions;
+    if (program) {
+        moduleImports_ = program->imports;
+    }
 
     pushScope();
 

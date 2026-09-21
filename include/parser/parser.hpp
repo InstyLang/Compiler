@@ -59,6 +59,7 @@ public:
     // Body of a #if: accepts top-level constructs (imports, types) as well as
     // statements. See stmt.cpp.
     AST::NodeList parseCompileTimeBlock();
+    AST::NodePtr parseDestructureStatement();
     AST::NodePtr parseVariableOrExpressionStatement();
     AST::NodePtr parseSectionBlock();
 
