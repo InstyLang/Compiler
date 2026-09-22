@@ -1,0 +1,66 @@
+module main
+
+import std::io
+import std::json
+
+fun main() -> i32 {
+    text json_src = `
+    {
+        "project": "Insty",
+        "version": 3.3,
+        "is_fast": true,
+        "tags": ["compiler", "systems", "language"],
+        "stats": {
+            "stars": 1000,
+            "contributors": 42
+        }
+    }
+    `
+
+    json.Json* root = json.parse(json_src)
+    if json.is_null(root) {
+        io.println("error: failed to parse JSON")
+        return 1
+    }
+
+    // Read top-level keys
+    text proj = json.get_str(json.object_get(root, "project"), "unknown")
+    io.print("Project: ")
+    io.println(proj)
+
+    f64 ver = json.get_number(json.object_get(root, "version"), 0.0)
+    io.print("Version: ")
+    io.print_int(cast<i64>(ver))
+    io.println("")
+
+    bool is_fast = json.get_bool(json.object_get(root, "is_fast"), false)
+    io.print("Is fast: ")
+    if is_fast { io.println("true") } else { io.println("false") }
+
+    // Read array
+    json.Json* tags = json.object_get(root, "tags")
+    i64 count = json.array_len(tags)
+    io.print("Tags count: ")
+    io.print_int(count)
+    io.println("")
+    for i in 0..count {
+        text tag = json.get_str(json.array_get(tags, i), "")
+        io.print("  tag: ")
+        io.println(tag)
+    }
+
+    // Nested object
+    json.Json* stats = json.object_get(root, "stats")
+    i64 stars = json.get_int(json.object_get(stats, "stars"), 0)
+    i64 contribs = json.get_int(json.object_get(stats, "contributors"), 0)
+    io.print("Stars: ")
+    io.print_int(stars)
+    io.print(", Contributors: ")
+    io.print_int(contribs)
+    io.println("")
+
+    if proj == "Insty" && count == 3 && stars == 1000 && contribs == 42 {
+        return 42
+    }
+    return 1
+}

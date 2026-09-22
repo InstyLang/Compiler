@@ -1,0 +1,551 @@
+// Insty standard library: json
+//
+// Fast, lightweight JSON parser and tree representation.
+//
+// Uses the `Json` tagged union for zero-copy representation of JSON trees:
+//   Json.Null
+//   Json.Bool(bool)
+//   Json.Number(f64)
+//   Json.Str(text)
+//   Json.Array(JsonList*)
+//   Json.Object(JsonObject*)
+//
+// Memory: nodes are allocated on the heap via `new Json` so recursive shapes
+// compose freely.
+//
+// Requires a heap allocator (`--allocator runtime` or `external`).
+
+module json
+
+import std::str
+import std::string
+
+export struct JsonNode {
+    text key,
+    Json* value
+}
+
+export struct JsonList {
+    Json*[] items,
+    i64 count
+}
+
+export struct JsonObject {
+    JsonNode[] entries,
+    i64 count
+}
+
+export enum Json {
+    Null,
+    Bool(bool),
+    Number(f64),
+    Str(text),
+    Array(JsonList*),
+    Object(JsonObject*)
+}
+
+// ---------------------------------------------------------------------------
+// Construction helpers
+// ---------------------------------------------------------------------------
+
+export fun json_null() -> Json* {
+    Json* j = new Json
+    unsafe { ~j = Json.Null }
+    return j
+}
+
+export fun json_bool(bool b) -> Json* {
+    Json* j = new Json
+    unsafe { ~j = Json.Bool(b) }
+    return j
+}
+
+export fun json_number(f64 n) -> Json* {
+    Json* j = new Json
+    unsafe { ~j = Json.Number(n) }
+    return j
+}
+
+export fun json_str(text s) -> Json* {
+    Json* j = new Json
+    unsafe { ~j = Json.Str(s) }
+    return j
+}
+
+export fun json_array() -> Json* {
+    Json* j = new Json
+    JsonList* v = new JsonList
+    v.items = new Json*[8]
+    v.count = 0
+    unsafe { ~j = Json.Array(v) }
+    return j
+}
+
+export fun json_object() -> Json* {
+    Json* j = new Json
+    JsonObject* m = new JsonObject
+    m.entries = new JsonNode[8]
+    m.count = 0
+    unsafe { ~j = Json.Object(m) }
+    return j
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers
+// ---------------------------------------------------------------------------
+
+export fun is_null(Json* j) -> bool {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return true }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Null => return true
+        _ => return false
+    }
+    return false
+}
+
+export fun get_bool(Json* j, bool fallback) -> bool {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return fallback }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Bool(b) => return b
+        _ => return fallback
+    }
+    return fallback
+}
+
+export fun get_number(Json* j, f64 fallback) -> f64 {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return fallback }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Number(n) => return n
+        _ => return fallback
+    }
+    return fallback
+}
+
+export fun get_int(Json* j, i64 fallback) -> i64 {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return fallback }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Number(n) => return cast<i64>(n)
+        _ => return fallback
+    }
+    return fallback
+}
+
+export fun get_str(Json* j, text fallback) -> text {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return fallback }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Str(s) => return s
+        _ => return fallback
+    }
+    return fallback
+}
+
+export fun array_len(Json* j) -> i64 {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return 0 }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Array(arr) => {
+            u64 a_addr = 0
+            unsafe { a_addr = cast<u64>(arr) }
+            if a_addr == 0 { return 0 }
+            return arr.count
+        }
+        _ => return 0
+    }
+    return 0
+}
+
+export fun array_get(Json* j, i64 index) -> Json* {
+    Json* null_res = 0
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return null_res }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Array(arr) => {
+            u64 a_addr = 0
+            unsafe { a_addr = cast<u64>(arr) }
+            if a_addr == 0 || index < 0 || index >= arr.count {
+                return null_res
+            }
+            return arr.items[index]
+        }
+        _ => return null_res
+    }
+    return null_res
+}
+
+export fun array_push(Json* j, Json* elem) -> void {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Array(arr) => {
+            u64 a_addr = 0
+            unsafe { a_addr = cast<u64>(arr) }
+            if a_addr != 0 {
+                if arr.count >= arr.items.len {
+                    // grow
+                    i64 new_cap = arr.items.len * 2
+                    Json*[] new_items = new Json*[new_cap]
+                    for i in 0..arr.count {
+                        new_items[i] = arr.items[i]
+                    }
+                    arr.items = new_items
+                }
+                arr.items[arr.count] = elem
+                arr.count = arr.count + 1
+            }
+        }
+        _ => {}
+    }
+}
+
+export fun object_get(Json* j, text key) -> Json* {
+    Json* null_res = 0
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return null_res }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Object(m) => {
+            u64 m_addr = 0
+            unsafe { m_addr = cast<u64>(m) }
+            if m_addr == 0 { return null_res }
+            for i in 0..m.count {
+                if m.entries[i].key == key {
+                    return m.entries[i].value
+                }
+            }
+            return null_res
+        }
+        _ => return null_res
+    }
+    return null_res
+}
+
+export fun object_has(Json* j, text key) -> bool {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return false }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Object(m) => {
+            u64 m_addr = 0
+            unsafe { m_addr = cast<u64>(m) }
+            if m_addr == 0 { return false }
+            for i in 0..m.count {
+                if m.entries[i].key == key {
+                    return true
+                }
+            }
+            return false
+        }
+        _ => return false
+    }
+    return false
+}
+
+export fun object_set(Json* j, text key, Json* val_node) -> void {
+    u64 addr = 0
+    unsafe { addr = cast<u64>(j) }
+    if addr == 0 { return }
+    Json val
+    unsafe { val = ~j }
+    switch val {
+        Object(m) => {
+            u64 m_addr = 0
+            unsafe { m_addr = cast<u64>(m) }
+            if m_addr != 0 {
+                // update existing
+                for i in 0..m.count {
+                    if m.entries[i].key == key {
+                        m.entries[i].value = val_node
+                        return
+                    }
+                }
+                // append
+                if m.count >= m.entries.len {
+                    i64 new_cap = m.entries.len * 2
+                    JsonNode[] new_entries = new JsonNode[new_cap]
+                    for i in 0..m.count {
+                        new_entries[i] = m.entries[i]
+                    }
+                    m.entries = new_entries
+                }
+                m.entries[m.count] = JsonNode{ key: key, value: val_node }
+                m.count = m.count + 1
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+class JsonParser {
+    u8* src
+    i64 len
+    i64 pos
+
+    constructor(u8* s, i64 l) {
+        this.src = s
+        this.len = l
+        this.pos = 0
+    }
+
+    fun peek() -> u8 {
+        if this.pos >= this.len { return cast<u8>(0) }
+        unsafe { return this.src[this.pos] }
+    }
+
+    fun next() -> u8 {
+        if this.pos >= this.len { return cast<u8>(0) }
+        u8 c = cast<u8>(0)
+        unsafe { c = this.src[this.pos] }
+        this.pos = this.pos + 1
+        return c
+    }
+
+    fun skip_ws() -> void {
+        while this.pos < this.len {
+            u8 c = this.peek()
+            if c == 32 || c == 9 || c == 10 || c == 13 {
+                this.pos = this.pos + 1
+            } else {
+                return
+            }
+        }
+    }
+
+    fun parse_value() -> Json* {
+        this.skip_ws()
+        u8 c = this.peek()
+        Json* null_res = 0
+        if c == 0 { return null_res }
+
+        if c == 110 { // 'n' -> null
+            return this.parse_null()
+        }
+        if c == 116 || c == 102 { // 't' or 'f' -> true or false
+            return this.parse_bool()
+        }
+        if c == 34 { // '"' -> string
+            return this.parse_string()
+        }
+        if c == 91 { // '[' -> array
+            return this.parse_array()
+        }
+        if c == 123 { // '{' -> object
+            return this.parse_object()
+        }
+        if (c >= 48 && c <= 57) || c == 45 { // 0-9 or '-' -> number
+            return this.parse_number()
+        }
+        return null_res
+    }
+
+    fun parse_null() -> Json* {
+        if this.pos + 4 <= this.len {
+            this.pos = this.pos + 4 // skip "null"
+            return json_null()
+        }
+        Json* null_res = 0
+        return null_res
+    }
+
+    fun parse_bool() -> Json* {
+        if this.peek() == 116 { // 't'
+            this.pos = this.pos + 4 // skip "true"
+            return json_bool(true)
+        }
+        this.pos = this.pos + 5 // skip "false"
+        return json_bool(false)
+    }
+
+    fun parse_number() -> Json* {
+        bool is_neg = false
+        if this.peek() == 45 { // '-'
+            is_neg = true
+            this.next()
+        }
+
+        f64 int_part = 0.0
+        while this.pos < this.len {
+            u8 c = this.peek()
+            if c >= 48 && c <= 57 {
+                int_part = int_part * 10.0 + cast<f64>(cast<i64>(c - 48))
+                this.next()
+            } else {
+                break
+            }
+        }
+
+        f64 frac_part = 0.0
+        if this.peek() == 46 { // '.'
+            this.next()
+            f64 div = 10.0
+            while this.pos < this.len {
+                u8 c = this.peek()
+                if c >= 48 && c <= 57 {
+                    frac_part = frac_part + cast<f64>(cast<i64>(c - 48)) / div
+                    div = div * 10.0
+                    this.next()
+                } else {
+                    break
+                }
+            }
+        }
+
+        f64 total = int_part + frac_part
+        if is_neg { total = 0.0 - total }
+        return json_number(total)
+    }
+
+    fun parse_string_raw() -> text {
+        this.next() // skip opening '"'
+        i64 start = this.pos
+        i64 count = 0
+        while this.pos < this.len {
+            u8 c = this.peek()
+            if c == 34 { // closing quote
+                break
+            }
+            if c == 92 { // escape '\\'
+                this.next()
+                this.next()
+                count = count + 2
+            } else {
+                this.next()
+                count = count + 1
+            }
+        }
+        this.next() // skip closing '"'
+
+        // Allocate null-terminated copy in heap
+        u8[] buf = new u8[count + 1]
+        for i in 0..count {
+            unsafe { buf[i] = this.src[start + i] }
+        }
+        unsafe { buf[count] = 0 }
+        unsafe { return cast<text>(buf.ptr) }
+    }
+
+    fun parse_string() -> Json* {
+        text s = this.parse_string_raw()
+        return json_str(s)
+    }
+
+    fun parse_array() -> Json* {
+        this.next() // skip '['
+        Json* arr = json_array()
+        this.skip_ws()
+
+        if this.peek() == 93 { // ']' empty array
+            this.next()
+            return arr
+        }
+
+        while this.pos < this.len {
+            Json* item = this.parse_value()
+            u64 it_addr = 0
+            unsafe { it_addr = cast<u64>(item) }
+            if it_addr != 0 {
+                array_push(arr, item)
+            }
+            this.skip_ws()
+            u8 c = this.peek()
+            if c == 44 { // ','
+                this.next()
+                this.skip_ws()
+            } else if c == 93 { // ']'
+                this.next()
+                break
+            } else {
+                break
+            }
+        }
+        return arr
+    }
+
+    fun parse_object() -> Json* {
+        this.next() // skip '{'
+        Json* obj = json_object()
+        this.skip_ws()
+
+        if this.peek() == 125 { // '}' empty object
+            this.next()
+            return obj
+        }
+
+        while this.pos < this.len {
+            this.skip_ws()
+            if this.peek() != 34 { // expect '"'
+                break
+            }
+            text key = this.parse_string_raw()
+            this.skip_ws()
+            if this.peek() == 58 { // ':'
+                this.next()
+            }
+            Json* val = this.parse_value()
+            u64 val_addr = 0
+            unsafe { val_addr = cast<u64>(val) }
+            if val_addr != 0 {
+                object_set(obj, key, val)
+            }
+            this.skip_ws()
+            u8 c = this.peek()
+            if c == 44 { // ','
+                this.next()
+            } else if c == 125 { // '}'
+                this.next()
+                break
+            } else {
+                break
+            }
+        }
+        return obj
+    }
+}
+
+// Parse JSON text into an in-memory Json* tree
+export fun parse(text input) -> Json* {
+    Json* null_res = 0
+    i64 l = str.len(input)
+    if l == 0 { return null_res }
+    JsonParser p
+    unsafe {
+        p = JsonParser{ src: cast<u8*>(input), len: l, pos: 0 }
+    }
+    return p.parse_value()
+}
