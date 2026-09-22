@@ -398,6 +398,10 @@ bool Checker::isAssignable(Types::TypeRef target, Types::TypeRef value,
         }
         return isAssignable(target->element, value->element, nullptr);
     }
+    // Any value can be assigned into a dynamic `object` property:
+    if (target->kind == Types::Kind::Object) {
+        return true;
+    }
     return false;
 }
 

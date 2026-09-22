@@ -210,7 +210,6 @@ export fun array_push(Json* j, Json* elem) -> void {
             unsafe { a_addr = cast<u64>(arr) }
             if a_addr != 0 {
                 if arr.count >= arr.items.len {
-                    // grow
                     i64 new_cap = arr.items.len * 2
                     Json*[] new_items = new Json*[new_cap]
                     for i in 0..arr.count {
@@ -284,14 +283,12 @@ export fun object_set(Json* j, text key, Json* val_node) -> void {
             u64 m_addr = 0
             unsafe { m_addr = cast<u64>(m) }
             if m_addr != 0 {
-                // update existing
                 for i in 0..m.count {
                     if m.entries[i].key == key {
                         m.entries[i].value = val_node
                         return
                     }
                 }
-                // append
                 if m.count >= m.entries.len {
                     i64 new_cap = m.entries.len * 2
                     JsonNode[] new_entries = new JsonNode[new_cap]
@@ -451,7 +448,6 @@ class JsonParser {
         }
         this.next() // skip closing '"'
 
-        // Allocate null-terminated copy in heap
         u8[] buf = new u8[count + 1]
         for i in 0..count {
             unsafe { buf[i] = this.src[start + i] }
@@ -548,4 +544,70 @@ export fun parse(text input) -> Json* {
         p = JsonParser{ src: cast<u8*>(input), len: l, pos: 0 }
     }
     return p.parse_value()
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic `object` construction and extraction
+// ---------------------------------------------------------------------------
+
+// Parse JSON directly into a dynamic Insty `object`
+export fun parse_object(text input) -> object {
+    object out = {}
+    Json* root = parse(input)
+    u64 r_addr = 0
+    unsafe { r_addr = cast<u64>(root) }
+    if r_addr == 0 { return out }
+    Json val
+    unsafe { val = ~root }
+    switch val {
+        Object(m) => {
+            u64 m_addr = 0
+            unsafe { m_addr = cast<u64>(m) }
+            if m_addr == 0 { return out }
+            for i in 0..m.count {
+                text k = m.entries[i].key
+                Json* vnode = m.entries[i].value
+                u64 vn_addr = 0
+                unsafe { vn_addr = cast<u64>(vnode) }
+                if vn_addr != 0 {
+                    Json vval
+                    unsafe { vval = ~vnode }
+                    switch vval {
+                        Number(n) => { out[k] = cast<i64>(n) }
+                        Str(s) => { out[k] = s }
+                        Bool(b) => { out[k] = b }
+                        _ => {}
+                    }
+                }
+            }
+            return out
+        }
+        _ => return out
+    }
+    return out
+}
+
+// Serialize an Insty dynamic `object` into formatted JSON text
+export fun stringify_object(object obj, text[] keys, i64 key_count) -> text {
+    string.String s
+    s.append("{")
+    for i in 0..key_count {
+        if i > 0 {
+            s.append(", ")
+        }
+        text k = keys[i]
+        s.append("\"")
+        s.append(k)
+        s.append("\": ")
+        // Read property string or numeric value
+        s.append("\"")
+        text val_str = ""
+        unsafe {
+            val_str = cast<text>(obj[k])
+        }
+        s.append(val_str)
+        s.append("\"")
+    }
+    s.append("}")
+    return s.cstr()
 }

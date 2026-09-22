@@ -3272,11 +3272,10 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
                     } else {
                         return kInvalidVReg;
                     }
-                    // Scan up to 8 slots, each 32 bytes: key=+0, val_lo=+8
+                    // Scan up to 8 slots using __ins_streq for string content equality
                     VReg result = fn_->newVReg();
                     emit({MOpcode::MovRI, {MOperand::defVReg(result), MOperand::immediate(0)}});
-                    std::uint32_t foundBlk = fn_->addBlock();
-                    std::uint32_t missBlk = fn_->addBlock();
+                    std::uint32_t doneBlk = fn_->addBlock();
                     for (unsigned i = 0; i < 8; ++i) {
                         std::int64_t off = static_cast<std::int64_t>(i * 32);
                         VReg slotKey = fn_->newVReg();
@@ -3284,38 +3283,33 @@ VReg InstructionSelector::selExpr(const AST::NodePtr& expr) {
                                   {MOperand::defVReg(slotKey), MOperand::useVReg(objPtr),
                                    MOperand::immediate(off)}};
                         ldk.width = 8; ldk.isSigned = false; emit(ldk);
-                        emit({MOpcode::Cmp,
-                              {MOperand::useVReg(slotKey), MOperand::useVReg(keyPtr)}});
-                        MInst jcc{MOpcode::Jcc, {MOperand::lbl(foundBlk)}};
-                        jcc.cond = Cond::EQ; emit(jcc);
-                    }
-                    emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
-                    // Found: load val_lo. Re-check which slot matched since Jcc
-                    // doesn't carry the index.
-                    curBlock_ = foundBlk;
-                    for (unsigned i = 0; i < 8; ++i) {
-                        std::int64_t off = static_cast<std::int64_t>(i * 32);
-                        VReg sk = fn_->newVReg();
-                        MInst ld{MOpcode::LoadInd,
-                                 {MOperand::defVReg(sk), MOperand::useVReg(objPtr),
-                                  MOperand::immediate(off)}};
-                        ld.width = 8; ld.isSigned = false; emit(ld);
-                        emit({MOpcode::Cmp,
-                              {MOperand::useVReg(sk), MOperand::useVReg(keyPtr)}});
-                        std::uint32_t loadB = fn_->addBlock();
-                        std::uint32_t skipB = fn_->addBlock();
-                        MInst j2{MOpcode::Jcc, {MOperand::lbl(loadB)}};
-                        j2.cond = Cond::EQ; emit(j2);
-                        emit({MOpcode::Jmp, {MOperand::lbl(skipB)}});
-                        curBlock_ = loadB;
+                        // Null check: if slotKey == 0, slot is empty
+                        VReg zero = fn_->newVReg();
+                        emit({MOpcode::MovRI, {MOperand::defVReg(zero), MOperand::immediate(0)}});
+                        emit({MOpcode::Cmp, {MOperand::useVReg(slotKey), MOperand::useVReg(zero)}});
+                        std::uint32_t nextSlot = fn_->addBlock();
+                        MInst jEmpty{MOpcode::Jcc, {MOperand::lbl(nextSlot)}};
+                        jEmpty.cond = Cond::EQ; emit(jEmpty);
+
+                        // Call __ins_streq(slotKey, keyPtr)
+                        VReg match = emitRuntimeCall("__ins_streq", {slotKey, keyPtr}, kInvalidVReg, false);
+                        emit({MOpcode::Cmp, {MOperand::useVReg(match), MOperand::useVReg(zero)}});
+                        std::uint32_t loadBlk = fn_->addBlock();
+                        MInst jMatch{MOpcode::Jcc, {MOperand::lbl(loadBlk)}};
+                        jMatch.cond = Cond::NE; emit(jMatch);
+                        emit({MOpcode::Jmp, {MOperand::lbl(nextSlot)}});
+
+                        curBlock_ = loadBlk;
                         MInst ldv{MOpcode::LoadInd,
                                   {MOperand::defVReg(result), MOperand::useVReg(objPtr),
                                    MOperand::immediate(off + 8)}};
                         ldv.width = 8; ldv.isSigned = false; emit(ldv);
-                        emit({MOpcode::Jmp, {MOperand::lbl(missBlk)}});
-                        curBlock_ = skipB;
+                        emit({MOpcode::Jmp, {MOperand::lbl(doneBlk)}});
+
+                        curBlock_ = nextSlot;
                     }
-                    curBlock_ = missBlk;
+                    emit({MOpcode::Jmp, {MOperand::lbl(doneBlk)}});
+                    curBlock_ = doneBlk;
                     return result;
                 }
             }
